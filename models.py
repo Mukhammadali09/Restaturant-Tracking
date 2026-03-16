@@ -14,10 +14,14 @@ class Restaurant(db.Model):
     address = db.Column(db.String(300), nullable=False)
     district = db.Column(db.String(100), nullable=False)
     phone = db.Column(db.String(30))
+    price_segment = db.Column(db.String(30), default="Premium")  # Premium / Luxury / Upper Casual
+    avg_bill_min = db.Column(db.Integer, default=0)  # UZS — typical bill range low end
+    avg_bill_max = db.Column(db.Integer, default=0)  # UZS — typical bill range high end
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     reviews = db.relationship("Review", backref="restaurant", lazy=True, cascade="all, delete-orphan")
     daily_stats = db.relationship("DailyStat", backref="restaurant", lazy=True, cascade="all, delete-orphan")
+    menu_items = db.relationship("MenuItem", backref="restaurant", lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -27,6 +31,9 @@ class Restaurant(db.Model):
             "address": self.address,
             "district": self.district,
             "phone": self.phone,
+            "price_segment": self.price_segment,
+            "avg_bill_min": self.avg_bill_min,
+            "avg_bill_max": self.avg_bill_max,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -54,6 +61,33 @@ class Review(db.Model):
             "comment": self.comment,
             "visit_date": self.visit_date.isoformat(),
             "created_at": self.created_at.isoformat(),
+        }
+
+
+class MenuItem(db.Model):
+    """Menu position with price — used for cross-restaurant price comparison."""
+    __tablename__ = "menu_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=False)
+    category = db.Column(db.String(80), nullable=False)   # Salads, Mains, Desserts, Drinks, etc.
+    name = db.Column(db.String(200), nullable=False)       # "Caesar Salad", "Plov", etc.
+    name_normalized = db.Column(db.String(200), nullable=False)  # lowercased for matching
+    price = db.Column(db.Integer, nullable=False)          # UZS
+    description = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "restaurant_id": self.restaurant_id,
+            "restaurant_name": self.restaurant.name if self.restaurant else None,
+            "restaurant_segment": self.restaurant.price_segment if self.restaurant else None,
+            "category": self.category,
+            "name": self.name,
+            "price": self.price,
+            "description": self.description,
+            "updated_at": self.updated_at.isoformat(),
         }
 
 

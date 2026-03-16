@@ -1,14 +1,15 @@
-"""Tashkent High-End Restaurant Review Tracker — Flask application."""
+"""Tashkent High-End Restaurant Market Tracker — Flask application."""
 
 from datetime import date, datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sqlalchemy import func
 
 import config
 from analytics import compute_daily_stats
-from models import DailyStat, Restaurant, Review, db
+from models import DailyStat, MenuItem, Restaurant, Review, db
 from seed import seed_database
 
 
@@ -37,7 +38,9 @@ def create_app():
     scheduler.add_job(scheduled_analytics, "cron", hour=0, minute=5)
     scheduler.start()
 
-    # --- Routes --------------------------------------------------------------
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  ROUTES
+    # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/")
     def index():
@@ -64,6 +67,9 @@ def create_app():
             address=data["address"],
             district=data.get("district", "Tashkent"),
             phone=data.get("phone"),
+            price_segment=data.get("price_segment", "Premium"),
+            avg_bill_min=data.get("avg_bill_min", 0),
+            avg_bill_max=data.get("avg_bill_max", 0),
         )
         db.session.add(r)
         db.session.commit()
@@ -94,10 +100,7 @@ def create_app():
         )
         db.session.add(review)
         db.session.commit()
-
-        # Re-compute stats for that day
         compute_daily_stats(review.visit_date)
-
         return jsonify(review.to_dict()), 201
 
     # -- Daily Stats / Analytics --
@@ -107,7 +110,6 @@ def create_app():
         restaurant_id = request.args.get("restaurant_id", type=int)
         days = request.args.get("days", 30, type=int)
         start = date.today() - timedelta(days=days)
-
         q = DailyStat.query.filter(DailyStat.date >= start).order_by(DailyStat.date.desc())
         if restaurant_id:
             q = q.filter_by(restaurant_id=restaurant_id)
@@ -116,10 +118,8 @@ def create_app():
 
     @app.route("/api/stats/summary")
     def summary_stats():
-        """Overall summary across all restaurants."""
         days = request.args.get("days", 30, type=int)
         start = date.today() - timedelta(days=days)
-
         stats = DailyStat.query.filter(DailyStat.date >= start).all()
 
         if not stats:
@@ -139,13 +139,242 @@ def create_app():
 
     @app.route("/api/stats/recompute", methods=["POST"])
     def recompute():
-        """Manually trigger analytics recomputation."""
         days = request.json.get("days", 1) if request.json else 1
         today = date.today()
         count = 0
         for offset in range(days):
             count += compute_daily_stats(today - timedelta(days=offset))
         return jsonify({"recomputed_restaurants": count, "days": days})
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  MENU ITEMS & PRICE COMPARISON
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/menu")
+    def list_menu():
+        """List menu items, optionally filtered by restaurant."""
+        restaurant_id = request.args.get("restaurant_id", type=int)
+        category = request.args.get("category")
+        q = MenuItem.query.order_by(MenuItem.category, MenuItem.name)
+        if restaurant_id:
+            q = q.filter_by(restaurant_id=restaurant_id)
+        if category:
+            q = q.filter_by(category=category)
+        return jsonify([m.to_dict() for m in q.all()])
+
+    @app.route("/api/menu/categories")
+    def menu_categories():
+        """Get all distinct menu categories."""
+        rows = db.session.query(MenuItem.category).distinct().order_by(MenuItem.category).all()
+        return jsonify([r[0] for r in rows])
+
+    @app.route("/api/menu/items")
+    def menu_item_names():
+        """Get distinct dish names (for autocomplete / search)."""
+        category = request.args.get("category")
+        q = db.session.query(MenuItem.name).distinct().order_by(MenuItem.name)
+        if category:
+            q = q.filter(MenuItem.category == category)
+        return jsonify([r[0] for r in q.all()])
+
+    @app.route("/api/menu", methods=["POST"])
+    def add_menu_item():
+        data = request.get_json()
+        mi = MenuItem(
+            restaurant_id=data["restaurant_id"],
+            category=data["category"],
+            name=data["name"],
+            name_normalized=data["name"].lower().strip(),
+            price=int(data["price"]),
+            description=data.get("description", ""),
+        )
+        db.session.add(mi)
+        db.session.commit()
+        return jsonify(mi.to_dict()), 201
+
+    @app.route("/api/menu/compare")
+    def compare_prices():
+        """
+        Core price comparison tool.
+        ?dish=Caesar Salad  → returns that dish's price at every restaurant that has it,
+                              sorted by price, with segment info and market stats.
+        ?category=Salads    → optional extra filter
+        """
+        dish = request.args.get("dish", "").strip()
+        category = request.args.get("category", "").strip()
+
+        if not dish:
+            return jsonify({"error": "Provide ?dish= parameter"}), 400
+
+        q = MenuItem.query.filter(MenuItem.name_normalized == dish.lower())
+        if category:
+            q = q.filter(MenuItem.category == category)
+
+        items = q.order_by(MenuItem.price).all()
+
+        if not items:
+            # Fuzzy: try partial match
+            q = MenuItem.query.filter(MenuItem.name_normalized.contains(dish.lower()))
+            if category:
+                q = q.filter(MenuItem.category == category)
+            items = q.order_by(MenuItem.price).all()
+
+        prices = [m.price for m in items]
+        avg_price = round(sum(prices) / len(prices)) if prices else 0
+        min_price = min(prices) if prices else 0
+        max_price = max(prices) if prices else 0
+
+        # Group by segment
+        by_segment = {}
+        for m in items:
+            seg = m.restaurant.price_segment if m.restaurant else "Unknown"
+            by_segment.setdefault(seg, []).append(m.price)
+
+        segment_avgs = {
+            seg: round(sum(ps) / len(ps))
+            for seg, ps in by_segment.items()
+        }
+
+        return jsonify({
+            "dish": dish,
+            "total_restaurants": len(items),
+            "avg_price": avg_price,
+            "min_price": min_price,
+            "max_price": max_price,
+            "segment_averages": segment_avgs,
+            "results": [m.to_dict() for m in items],
+        })
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  MARKET ANALYTICS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/analytics/segments")
+    def analytics_segments():
+        """Breakdown by price segment: count, avg bill, avg rating."""
+        days = request.args.get("days", 30, type=int)
+        start = date.today() - timedelta(days=days)
+
+        results = (
+            db.session.query(
+                Restaurant.price_segment,
+                func.count(func.distinct(Restaurant.id)),
+                func.avg(DailyStat.avg_bill),
+                func.avg(DailyStat.avg_rating),
+            )
+            .join(DailyStat, DailyStat.restaurant_id == Restaurant.id)
+            .filter(DailyStat.date >= start)
+            .group_by(Restaurant.price_segment)
+            .all()
+        )
+
+        return jsonify([
+            {
+                "segment": r[0],
+                "restaurant_count": r[1],
+                "avg_bill": round(r[2] or 0, 2),
+                "avg_rating": round(r[3] or 0, 2),
+            }
+            for r in results
+        ])
+
+    @app.route("/api/analytics/cuisines")
+    def analytics_cuisines():
+        """Breakdown by cuisine type."""
+        days = request.args.get("days", 30, type=int)
+        start = date.today() - timedelta(days=days)
+
+        results = (
+            db.session.query(
+                Restaurant.cuisine,
+                func.count(func.distinct(Restaurant.id)),
+                func.avg(DailyStat.avg_bill),
+                func.avg(DailyStat.avg_rating),
+            )
+            .join(DailyStat, DailyStat.restaurant_id == Restaurant.id)
+            .filter(DailyStat.date >= start)
+            .group_by(Restaurant.cuisine)
+            .order_by(func.avg(DailyStat.avg_bill).desc())
+            .all()
+        )
+
+        return jsonify([
+            {
+                "cuisine": r[0],
+                "restaurant_count": r[1],
+                "avg_bill": round(r[2] or 0, 2),
+                "avg_rating": round(r[3] or 0, 2),
+            }
+            for r in results
+        ])
+
+    @app.route("/api/analytics/districts")
+    def analytics_districts():
+        """Breakdown by district."""
+        days = request.args.get("days", 30, type=int)
+        start = date.today() - timedelta(days=days)
+
+        results = (
+            db.session.query(
+                Restaurant.district,
+                func.count(func.distinct(Restaurant.id)),
+                func.avg(DailyStat.avg_bill),
+                func.avg(DailyStat.avg_rating),
+            )
+            .join(DailyStat, DailyStat.restaurant_id == Restaurant.id)
+            .filter(DailyStat.date >= start)
+            .group_by(Restaurant.district)
+            .order_by(func.count(func.distinct(Restaurant.id)).desc())
+            .all()
+        )
+
+        return jsonify([
+            {
+                "district": r[0],
+                "restaurant_count": r[1],
+                "avg_bill": round(r[2] or 0, 2),
+                "avg_rating": round(r[3] or 0, 2),
+            }
+            for r in results
+        ])
+
+    @app.route("/api/analytics/ranking")
+    def analytics_ranking():
+        """Restaurant ranking by avg rating and avg bill over period."""
+        days = request.args.get("days", 30, type=int)
+        start = date.today() - timedelta(days=days)
+
+        results = (
+            db.session.query(
+                Restaurant.id,
+                Restaurant.name,
+                Restaurant.cuisine,
+                Restaurant.price_segment,
+                Restaurant.district,
+                func.sum(DailyStat.review_count),
+                func.avg(DailyStat.avg_bill),
+                func.avg(DailyStat.avg_rating),
+            )
+            .join(DailyStat, DailyStat.restaurant_id == Restaurant.id)
+            .filter(DailyStat.date >= start)
+            .group_by(Restaurant.id)
+            .order_by(func.avg(DailyStat.avg_rating).desc())
+            .all()
+        )
+
+        return jsonify([
+            {
+                "id": r[0],
+                "name": r[1],
+                "cuisine": r[2],
+                "price_segment": r[3],
+                "district": r[4],
+                "total_reviews": r[5],
+                "avg_bill": round(r[6] or 0, 2),
+                "avg_rating": round(r[7] or 0, 2),
+            }
+            for r in results
+        ])
 
     return app
 
