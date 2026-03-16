@@ -23,11 +23,6 @@ def create_app():
         db.create_all()
         seed_database()
 
-        # Compute stats for the last 30 days on first run
-        today = date.today()
-        for offset in range(30):
-            compute_daily_stats(today - timedelta(days=offset))
-
     # --- Scheduled daily analytics -------------------------------------------
     scheduler = BackgroundScheduler(daemon=True)
 

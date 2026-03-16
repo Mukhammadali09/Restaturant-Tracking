@@ -15,7 +15,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   restaurants = await fetchJSON("/api/restaurants");
   setupTabs();
   populateAllSelects();
-  loadDashboard();
   loadPriceCompareDropdowns();
 
   // Event listeners
@@ -47,6 +46,7 @@ function setupTabs() {
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
 
       // Lazy-load tab data
+      if (btn.dataset.tab === "dashboard") loadDashboard();
       if (btn.dataset.tab === "market") loadMarketAnalytics();
       if (btn.dataset.tab === "restaurants") renderRestaurantTable();
       if (btn.dataset.tab === "reviews") loadReviews();

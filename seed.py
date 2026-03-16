@@ -1,9 +1,8 @@
 """Seed the database with real Tashkent high-end restaurants, menu items, and sample reviews."""
 
 import random
-from datetime import date, timedelta
 
-from models import MenuItem, Restaurant, Review, db
+from models import MenuItem, Restaurant, db
 
 # ─── Real Tashkent High-End Restaurants ──────────────────────────────────────
 # Must-haves from the holding + top competitors across the city
@@ -174,71 +173,39 @@ MENU_CATEGORIES = {
     ],
 }
 
-# Price multiplier by segment (base prices are for "Upper Casual")
+# Price multiplier by segment.
+# Base prices below are calibrated for "Upper Casual" Tashkent (Besh Qozon, ChayKof, Tandir level).
+# Premium (Basilic, Syrovarnya, Cucucina) ≈ 1.6×
+# Luxury (Novikov, City 21, Gorynich, Sette) ≈ 2.6×
 SEGMENT_MULTIPLIERS = {
     "Upper Casual": 1.0,
-    "Premium": 1.5,
-    "Luxury": 2.3,
+    "Premium": 1.6,
+    "Luxury": 2.6,
 }
 
-# Base prices (UZS) for Upper Casual segment
+# Base prices (UZS) — calibrated for Upper Casual segment in Tashkent (2025-2026 prices)
 BASE_PRICES = {
-    "Caesar Salad": 45_000, "Greek Salad": 40_000, "Burrata Salad": 65_000,
-    "Tashkent Salad": 38_000, "Niçoise Salad": 52_000,
-    "Beef Tartare": 75_000, "Salmon Tartare": 80_000, "Vitello Tonnato": 70_000,
-    "Bruschetta": 35_000, "Carpaccio": 72_000,
-    "Manti": 35_000, "Khinkali": 32_000, "Samsa": 18_000,
-    "Tom Yum": 48_000, "French Onion Soup": 42_000,
-    "Ribeye Steak": 180_000, "Rack of Lamb": 165_000, "Beef Stroganoff": 85_000,
-    "Plov": 45_000, "Shashlik (Lamb)": 65_000, "Duck Breast": 140_000,
-    "Chicken Kyiv": 65_000,
-    "Salmon Fillet": 120_000, "Sea Bass": 150_000, "Shrimp Risotto": 95_000,
-    "Tuna Steak": 130_000,
-    "Pasta Carbonara": 55_000, "Penne Arrabiata": 48_000, "Truffle Pasta": 95_000,
-    "Margherita Pizza": 48_000, "Pizza Quattro Formaggi": 55_000,
-    "Philadelphia Roll": 58_000, "Dragon Roll": 72_000, "Sashimi Set": 150_000,
-    "Pad Thai": 55_000, "Wok Udon": 48_000,
-    "Tiramisu": 45_000, "Crème Brûlée": 42_000, "Cheesecake": 48_000,
-    "Chocolate Fondant": 52_000, "Napoleon Cake": 38_000,
-    "Espresso": 18_000, "Cappuccino": 25_000, "Fresh Orange Juice": 28_000,
-    "Lemonade": 30_000, "Mojito (non-alc)": 35_000,
+    "Caesar Salad": 52_000, "Greek Salad": 45_000, "Burrata Salad": 72_000,
+    "Tashkent Salad": 42_000, "Niçoise Salad": 58_000,
+    "Beef Tartare": 85_000, "Salmon Tartare": 92_000, "Vitello Tonnato": 82_000,
+    "Bruschetta": 42_000, "Carpaccio": 82_000,
+    "Manti": 42_000, "Khinkali": 38_000, "Samsa": 22_000,
+    "Tom Yum": 58_000, "French Onion Soup": 48_000,
+    "Ribeye Steak": 198_000, "Rack of Lamb": 185_000, "Beef Stroganoff": 95_000,
+    "Plov": 48_000, "Shashlik (Lamb)": 72_000, "Duck Breast": 158_000,
+    "Chicken Kyiv": 72_000,
+    "Salmon Fillet": 138_000, "Sea Bass": 168_000, "Shrimp Risotto": 108_000,
+    "Tuna Steak": 148_000,
+    "Pasta Carbonara": 62_000, "Penne Arrabiata": 55_000, "Truffle Pasta": 108_000,
+    "Margherita Pizza": 55_000, "Pizza Quattro Formaggi": 62_000,
+    "Philadelphia Roll": 65_000, "Dragon Roll": 82_000, "Sashimi Set": 168_000,
+    "Pad Thai": 62_000, "Wok Udon": 55_000,
+    "Tiramisu": 52_000, "Crème Brûlée": 48_000, "Cheesecake": 55_000,
+    "Chocolate Fondant": 58_000, "Napoleon Cake": 48_000,
+    "Espresso": 22_000, "Cappuccino": 30_000, "Fresh Orange Juice": 32_000,
+    "Lemonade": 35_000, "Mojito (non-alc)": 42_000,
 }
 
-REVIEWERS = [
-    "Aziz M.", "Dilnoza K.", "Rustam S.", "Nigora T.", "Bobur A.",
-    "Kamola R.", "Jasur N.", "Malika D.", "Timur F.", "Zarina H.",
-    "Otabek L.", "Gulnara P.", "Sherzod V.", "Lola B.", "Farrukh I.",
-    "Sardor K.", "Madina Y.", "Alisher R.", "Nozima S.", "Jamshid B.",
-    "Elena V.", "Alexander K.", "Dmitry P.", "Irina T.", "Mikhail S.",
-]
-
-COMMENTS = [
-    "Outstanding experience, world-class service.",
-    "Beautifully presented dishes but portions are small for the price.",
-    "The lamb was perfectly cooked. Will return!",
-    "Overpriced but the ambiance makes up for it.",
-    "Best plov in the city, hands down.",
-    "Wine list is impressive. Great sommelier.",
-    "Service was slow on a busy evening.",
-    "A gem! Every dish was a delight.",
-    "Good but not worth the premium price tag.",
-    "Exquisite flavors, creative menu. Highly recommended.",
-    "Decent food, exceptional rooftop view of Tashkent.",
-    "Average taste, but beautiful interior design.",
-    "Perfect for a special occasion dinner.",
-    "Fresh ingredients, you can taste the quality.",
-    "The dessert menu alone is worth a visit.",
-    "Staff was attentive and professional throughout.",
-    "Noisy atmosphere, hard to have a conversation.",
-    "One of the best new openings in Tashkent.",
-    "Consistent quality every time we visit.",
-    "Great for business lunches. Private rooms available.",
-    "The steak was cooked exactly as ordered. Impressive.",
-    "Went with a large group — handled perfectly.",
-    "Value for money is questionable at this level.",
-    "The chef's tasting menu is a must-try.",
-    "Parking is a nightmare but the food compensates.",
-]
 
 
 def seed_database():
@@ -278,26 +245,5 @@ def seed_database():
                 )
                 db.session.add(mi)
 
-    # ── Reviews (30 days) ────────────────────────────────────────────────────
-    today = date.today()
-    for r in restaurants:
-        for day_offset in range(30):
-            visit_day = today - timedelta(days=day_offset)
-            num_reviews = random.randint(1, 5)
-            for _ in range(num_reviews):
-                # Bill amount within the restaurant's declared range
-                bill = random.randint(r.avg_bill_min, r.avg_bill_max)
-                # Higher-end places tend to have higher ratings (slight bias)
-                base_rating = 4 if r.price_segment == "Luxury" else 3
-                rating = min(5, max(1, base_rating + random.choice([-1, 0, 0, 1, 1])))
-                review = Review(
-                    restaurant_id=r.id,
-                    reviewer_name=random.choice(REVIEWERS),
-                    rating=rating,
-                    bill_amount=bill,
-                    comment=random.choice(COMMENTS),
-                    visit_date=visit_day,
-                )
-                db.session.add(review)
-
+    # No fake reviews — all review data comes from real user input via the portal.
     db.session.commit()
