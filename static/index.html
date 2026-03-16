@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tashkent Restaurant Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Tashkent High-End Restaurant Tracker</h1>
+    <p class="subtitle">Automatic daily average-bill analysis &amp; review tracking</p>
+  </header>
+
+  <!-- Summary cards -->
+  <section id="summary" class="card-row">
+    <div class="card">
+      <span class="card-label">Total Reviews (30 d)</span>
+      <span id="totalReviews" class="card-value">—</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Avg Bill (UZS)</span>
+      <span id="avgBill" class="card-value">—</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Avg Rating</span>
+      <span id="avgRating" class="card-value">—</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Restaurants Tracked</span>
+      <span id="restaurantCount" class="card-value">—</span>
+    </div>
+  </section>
+
+  <!-- Charts -->
+  <section class="charts">
+    <div class="chart-box">
+      <h2>Average Bill Trend (last 30 days)</h2>
+      <canvas id="billChart"></canvas>
+    </div>
+    <div class="chart-box">
+      <h2>Average Rating Trend (last 30 days)</h2>
+      <canvas id="ratingChart"></canvas>
+    </div>
+  </section>
+
+  <!-- Restaurant selector + table -->
+  <section class="data-section">
+    <div class="controls">
+      <label for="restaurantSelect">Filter by restaurant:</label>
+      <select id="restaurantSelect">
+        <option value="">All Restaurants</option>
+      </select>
+      <button id="recomputeBtn" title="Re-run daily analytics">Recompute Stats</button>
+    </div>
+
+    <h2>Daily Statistics</h2>
+    <table id="statsTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Restaurant</th>
+          <th>Reviews</th>
+          <th>Avg Bill (UZS)</th>
+          <th>Min Bill</th>
+          <th>Max Bill</th>
+          <th>Avg Rating</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- Add review form -->
+  <section class="form-section">
+    <h2>Submit a Review</h2>
+    <form id="reviewForm">
+      <div class="form-row">
+        <label for="revRestaurant">Restaurant</label>
+        <select id="revRestaurant" required></select>
+      </div>
+      <div class="form-row">
+        <label for="revName">Your Name</label>
+        <input id="revName" type="text" required placeholder="e.g. Aziz M." />
+      </div>
+      <div class="form-row">
+        <label for="revRating">Rating (1-5)</label>
+        <input id="revRating" type="number" min="1" max="5" required />
+      </div>
+      <div class="form-row">
+        <label for="revBill">Bill Amount (UZS)</label>
+        <input id="revBill" type="number" min="0" required placeholder="e.g. 350000" />
+      </div>
+      <div class="form-row">
+        <label for="revDate">Visit Date</label>
+        <input id="revDate" type="date" required />
+      </div>
+      <div class="form-row">
+        <label for="revComment">Comment</label>
+        <textarea id="revComment" rows="3" placeholder="Share your experience..."></textarea>
+      </div>
+      <button type="submit">Submit Review</button>
+    </form>
+    <p id="formMsg"></p>
+  </section>
+
+  <!-- Recent reviews -->
+  <section class="data-section">
+    <h2>Recent Reviews</h2>
+    <div id="reviewsList"></div>
+  </section>
+
+  <footer>
+    <p>Tashkent Restaurant Tracker &mdash; Analytics update daily at 00:05 &amp; on every new review</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
