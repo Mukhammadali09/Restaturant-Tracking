@@ -1,11 +1,19 @@
 """Menu image parsing — Claude Vision API (primary) with OCR.space fallback."""
 
 import base64
+import io
 import json
 import os
 import re
 
 import requests
+from PIL import Image
+
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
 
 try:
     import anthropic
@@ -60,10 +68,10 @@ def _parse_with_claude(files_list):
     # Build content blocks — one per file
     content_blocks = []
     for file_bytes, content_type, filename in files_list:
-        b64_data = base64.b64encode(file_bytes).decode("utf-8")
         is_pdf = filename.lower().endswith(".pdf")
 
         if is_pdf:
+            b64_data = base64.b64encode(file_bytes).decode("utf-8")
             content_blocks.append({
                 "type": "document",
                 "source": {
@@ -73,17 +81,29 @@ def _parse_with_claude(files_list):
                 },
             })
         else:
-            # Browser converts HEIC/HEIF to JPEG before upload
-            # Fallback: if somehow an unsupported type arrives, label as jpeg
-            SUPPORTED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-            media_type = content_type or "image/jpeg"
-            if media_type not in SUPPORTED_TYPES:
-                media_type = "image/jpeg"
+            # Force-convert ALL images to clean JPEG via Pillow
+            # Handles: HEIC, HEIF, PNG, BMP, TIFF, WebP, corrupt files
+            try:
+                img = Image.open(io.BytesIO(file_bytes))
+                # Resize large images (iPhone 12MP+ = 4032x3024)
+                MAX_DIM = 2048
+                if max(img.size) > MAX_DIM:
+                    img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
+                if img.mode in ("RGBA", "P", "LA"):
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                file_bytes = buf.getvalue()
+            except Exception as e:
+                print(f"Pillow conversion failed for {filename}: {e}")
+                # Last resort: use raw bytes and hope for the best
+
+            b64_data = base64.b64encode(file_bytes).decode("utf-8")
             content_blocks.append({
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": media_type,
+                    "media_type": "image/jpeg",
                     "data": b64_data,
                 },
             })
