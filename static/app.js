@@ -226,6 +226,7 @@ async function ocrUpload() {
   const files = fileInput.files;
 
   if (!files.length) { status.textContent = t("msg_select_photo"); status.style.color = "var(--red)"; return; }
+  if (files.length > 10) { status.textContent = t("msg_max_files"); status.style.color = "var(--red)"; return; }
 
   status.textContent = t("msg_scanning") + (files.length > 1 ? ` (1/${files.length})` : "");
   status.style.color = "var(--gold)";

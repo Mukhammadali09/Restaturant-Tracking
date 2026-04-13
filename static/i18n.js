@@ -33,7 +33,7 @@ const TRANSLATIONS = {
     ph_your_name: "Your name",
     // OCR
     ocr_title: "Upload Menu Photo / PDF (OCR)",
-    ocr_hint: "Upload a photo or PDF of a restaurant menu. The system will read it automatically and extract dishes and prices.",
+    ocr_hint: "Upload menu photos or PDF (up to 10 pages). If your phone limits selection to 5 files, just scan multiple times — items accumulate.",
     lbl_menu_file: "Menu Files (photos or PDF)",
     lbl_menu_lang: "Menu Language",
     btn_scan: "Scan Menu",
@@ -118,6 +118,7 @@ const TRANSLATIONS = {
     msg_confirm_del: 'Remove "{0}" and all its menu data? This cannot be undone.',
     msg_confirm_clear: 'Delete ALL menu items for "{0}"? This cannot be undone.',
     msg_select_photo: "Select a photo or PDF first",
+    msg_max_files: "Maximum 10 files at a time. Upload in batches — items accumulate.",
     btn_save: "Save",
     btn_saved: "Saved!",
     btn_del: "Del",
@@ -167,7 +168,7 @@ const TRANSLATIONS = {
     ph_your_name: "Ваше имя",
     // OCR
     ocr_title: "Загрузить фото / PDF меню (OCR)",
-    ocr_hint: "Загрузите фото или PDF меню ресторана. Система автоматически считает его и извлечёт блюда и цены.",
+    ocr_hint: "Загрузите фото или PDF меню (до 10 страниц). Если телефон ограничивает выбор 5 файлами — сканируйте несколько раз, позиции накапливаются.",
     lbl_menu_file: "Файлы меню (фото или PDF)",
     lbl_menu_lang: "Язык меню",
     btn_scan: "Сканировать меню",
@@ -252,6 +253,7 @@ const TRANSLATIONS = {
     msg_confirm_del: 'Удалить "{0}" и все данные меню? Это действие нельзя отменить.',
     msg_confirm_clear: 'Удалить ВСЕ позиции меню для "{0}"? Это действие нельзя отменить.',
     msg_select_photo: "Сначала выберите фото или PDF",
+    msg_max_files: "Максимум 10 файлов за раз. Загружайте частями — позиции накапливаются.",
     btn_save: "Сохр.",
     btn_saved: "Готово!",
     btn_del: "Удал.",
