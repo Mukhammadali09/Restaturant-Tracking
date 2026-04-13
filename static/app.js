@@ -159,7 +159,10 @@ async function browseMenu() {
 
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
     <span class="hint">${items.length} ${t("th_items").toLowerCase()}</span>
-    <button class="btn-sm btn-del" onclick="clearRestaurantMenu(${rid})">${t("btn_clear_all")}</button>
+    <div style="display:flex;gap:.4rem">
+      <button class="btn-sm btn-save" onclick="saveAllPrices(${rid})">${t("btn_save_all")}</button>
+      <button class="btn-sm btn-del" onclick="clearRestaurantMenu(${rid})">${t("btn_clear_all")}</button>
+    </div>
   </div>`;
   html += `<div class="table-scroll"><table><thead><tr><th>${t("lbl_category")}</th><th>${t("th_dish")}</th><th>${t("lbl_price")}</th><th>${t("th_collected")}</th><th>${t("th_by")}</th><th>${t("th_actions")}</th></tr></thead><tbody>`;
   for (const [cat, list] of Object.entries(cats)) {
@@ -189,6 +192,20 @@ async function savePrice(id, btn) {
   btn.textContent = t("btn_saved");
   setTimeout(() => { btn.textContent = t("btn_save"); }, 1500);
   loadMenuManagement();
+}
+
+async function saveAllPrices(rid) {
+  const inputs = document.querySelectorAll("input.inline-price");
+  const by = document.getElementById("mfBy").value || "";
+  const today = new Date().toISOString().split("T")[0];
+  const promises = [];
+  inputs.forEach(input => {
+    const id = input.dataset.id;
+    promises.push(putJSON(`/api/menu/${id}`, {price: +input.value, collected_by: by, collected_date: today}));
+  });
+  await Promise.all(promises);
+  loadMenuManagement();
+  browseMenu();
 }
 
 async function deleteItem(id) {

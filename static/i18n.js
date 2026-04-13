@@ -122,6 +122,7 @@ const TRANSLATIONS = {
     btn_saved: "Saved!",
     btn_del: "Del",
     btn_remove: "Remove",
+    btn_save_all: "Save All",
     btn_clear_all: "Clear All Items",
     lbl_none: "none",
     // Browse table headers
@@ -255,6 +256,7 @@ const TRANSLATIONS = {
     btn_saved: "Готово!",
     btn_del: "Удал.",
     btn_remove: "Удалить",
+    btn_save_all: "Сохранить всё",
     btn_clear_all: "Очистить всё",
     lbl_none: "нет",
     // Browse table headers
