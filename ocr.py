@@ -19,21 +19,25 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OCR_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
 OCR_API_URL = "https://api.ocr.space/parse/image"
 
-MENU_EXTRACTION_PROMPT = """Extract ALL dishes with their prices from this restaurant menu image.
+MENU_EXTRACTION_PROMPT = """Extract EVERY item with its price from ALL pages/images of this restaurant menu.
 
 Return ONLY a valid JSON array — no explanation, no markdown, just the array.
 Each element must have exactly these keys:
-- "name": the complete dish name as printed on the menu (omit markers like V, N, circled icons)
+- "name": the item name as printed (include volume/size like "750ml" or "0.7" for drinks; omit markers V, N, circled icons)
 - "price": the price as a plain integer in UZS (e.g. 280000 not "280 000")
-- "category": the section/category header this dish belongs to, in Title Case
+- "category": the section/category header this item belongs to, in Title Case
 
 Rules:
-- Include EVERY dish on the page — do not skip any
+- Process EVERY page/image — do not skip any page
+- Include EVERY item: food dishes, wines, spirits, cocktails, beers, soft drinks — everything with a price
 - Read each column independently; do NOT merge text across columns
-- Prices in Uzbekistan are typically 5–7 digits (e.g. 70000 … 1050000)
+- Prices in Uzbekistan are typically 5–7 digits (e.g. 70000 … 12000000)
 - Convert spaced prices: "280 000" → 280000
+- Dual prices (glass / bottle) like "108 000 / 2 157 000": create TWO entries — one with "(glass)" suffix at the lower price, one with "(bottle)" suffix at the higher price
 - Strip menu markers (V) vegetarian, (N) new, circled letters, etc.
-- For nested sub-sections (e.g. "Ceviche" under "Raw Bar"), use "Raw Bar" as category
+- For nested sub-sections (e.g. "Ceviche" under "Raw Bar"), use the parent section as category
+- For wine regions (e.g. "Tuscany" under "Red Wine Italy"), use "Red Wine Italy" or similar top-level section as category
+- Do NOT stop early — extract every single item from every page
 """
 
 
@@ -86,11 +90,21 @@ def _parse_with_claude(files_list):
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=8192,
+        max_tokens=16384,
         messages=[{"role": "user", "content": content_blocks}],
     )
 
     raw = message.content[0].text.strip()
+
+    # Check if output was truncated (model hit max_tokens limit)
+    if message.stop_reason == "max_tokens":
+        print(f"WARNING: Claude response was truncated at max_tokens. "
+              f"Output length: {len(raw)} chars. Attempting to salvage partial JSON.")
+        # Try to close the JSON array so we can parse what we got
+        # Find the last complete object (ending with })
+        last_brace = raw.rfind("}")
+        if last_brace > 0:
+            raw = raw[:last_brace + 1] + "]"
 
     # Strip markdown code fences if present
     if raw.startswith("```"):
