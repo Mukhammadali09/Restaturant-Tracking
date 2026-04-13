@@ -228,7 +228,7 @@ function toJpeg(file) {
     // ALL images go through canvas — converts HEIC and resizes large files
     const img = new window.Image();
     img.onload = () => {
-      const MAX = 2048;
+      const MAX = 1600;
       let w = img.naturalWidth, h = img.naturalHeight;
       if (w > MAX || h > MAX) {
         const scale = MAX / Math.max(w, h);
@@ -240,9 +240,10 @@ function toJpeg(file) {
       c.height = h;
       c.getContext("2d").drawImage(img, 0, 0, w, h);
       c.toBlob((blob) => {
+        URL.revokeObjectURL(img.src);
+        if (!blob) { resolve(file); return; }
         const name = file.name.replace(/\.\w+$/, ".jpg");
         resolve(new File([blob], name, {type: "image/jpeg"}));
-        URL.revokeObjectURL(img.src);
       }, "image/jpeg", 0.85);
     };
     img.onerror = () => { resolve(file); };
@@ -261,53 +262,68 @@ async function ocrUpload() {
   if (!files.length) { status.textContent = t("msg_select_photo"); status.style.color = "var(--red)"; return; }
   if (files.length > 10) { status.textContent = t("msg_max_files"); status.style.color = "var(--red)"; return; }
 
-  status.textContent = t("msg_scanning");
-  status.style.color = "var(--gold)";
+  // Process each file one at a time — reliable on all devices
+  let totalSaved = 0;
+  let lastMethod = "";
+  let lastClaudeError = "";
+  let allRawText = "";
+  let errors = [];
 
-  // Convert all images to JPEG in the browser (handles iPhone HEIC/HEIF)
-  const converted = await Promise.all(Array.from(files).map(f => toJpeg(f)));
+  for (let i = 0; i < files.length; i++) {
+    status.textContent = t("msg_scanning") + ` (${i + 1}/${files.length})`;
+    status.style.color = "var(--gold)";
 
-  // Send ALL files in a single request — 1 API call instead of N
-  const formData = new FormData();
-  for (let i = 0; i < converted.length; i++) {
-    formData.append("file", converted[i]);
+    // Convert image sequentially (avoids iOS memory issues with parallel canvas)
+    const converted = await toJpeg(files[i]);
+
+    const formData = new FormData();
+    formData.append("file", converted);
+    formData.append("language", lang);
+    formData.append("restaurant_id", rid);
+    formData.append("collected_by", by);
+
+    try {
+      const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
+      if (!res.ok) {
+        let errMsg = `HTTP ${res.status}`;
+        try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+        errors.push(`${files[i].name}: ${errMsg}`);
+        continue;
+      }
+      const data = await res.json();
+      if (data.error) { errors.push(`${files[i].name}: ${data.error}`); continue; }
+
+      totalSaved += data.saved || 0;
+      lastMethod = data.method || lastMethod;
+      if (data.claude_error) lastClaudeError = data.claude_error;
+      if (data.raw_text) allRawText += (allRawText ? "\n\n" : "") + data.raw_text;
+    } catch (e) {
+      errors.push(`${files[i].name}: ${e.message}`);
+    }
   }
-  formData.append("language", lang);
-  formData.append("restaurant_id", rid);
-  formData.append("collected_by", by);
 
-  try {
-    const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
-    const data = await res.json();
+  // Show raw text for debugging
+  if (allRawText) {
+    document.getElementById("ocrRawText").textContent = allRawText;
+    document.getElementById("ocrRawDetails").style.display = "block";
+  }
 
-    if (data.error) {
-      status.textContent = data.error;
-      status.style.color = "var(--red)";
-      return;
-    }
-
-    // Show raw text for debugging
-    if (data.raw_text) {
-      document.getElementById("ocrRawText").textContent = data.raw_text;
-      document.getElementById("ocrRawDetails").style.display = "block";
-    }
-
-    // Build success message with method indicator
-    const totalSaved = data.saved || 0;
-    const method = data.method || "unknown";
-    const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
-    const methodLabel = method === "claude_vision" ? "AI Vision" : "OCR";
-    let msg = t("msg_ocr_saved", totalSaved, restName) + ` [${methodLabel}]`;
-    if (data.claude_error && method !== "claude_vision") {
-      msg += ` | Claude Vision error: ${data.claude_error}`;
-    }
-    status.textContent = msg;
-    status.style.color = method === "claude_vision" ? "var(--green)" : "var(--gold)";
-  } catch (e) {
-    status.textContent = t("msg_upload_fail", e.message);
+  if (totalSaved === 0 && errors.length) {
+    status.textContent = errors.join("; ");
     status.style.color = "var(--red)";
     return;
   }
+
+  // Build success message
+  const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
+  const methodLabel = lastMethod === "claude_vision" ? "AI Vision" : "OCR";
+  let msg = t("msg_ocr_saved", totalSaved, restName) + ` [${methodLabel}]`;
+  if (lastClaudeError && lastMethod !== "claude_vision") {
+    msg += ` | Claude Vision error: ${lastClaudeError}`;
+  }
+  if (errors.length) msg += ` | ${errors.length} failed`;
+  status.textContent = msg;
+  status.style.color = lastMethod === "claude_vision" ? "var(--green)" : "var(--gold)";
 
   // Clear file input
   fileInput.value = "";
