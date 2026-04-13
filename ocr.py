@@ -1,11 +1,19 @@
 """Menu image parsing — Claude Vision API (primary) with OCR.space fallback."""
 
 import base64
+import io
 import json
 import os
 import re
 
 import requests
+from PIL import Image
+
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
 
 try:
     import anthropic
@@ -74,10 +82,20 @@ def _parse_with_claude(files_list):
             })
         else:
             # Claude API only accepts: image/jpeg, image/png, image/gif, image/webp
+            # iPhone sends HEIC/HEIF — convert unsupported formats to JPEG
             SUPPORTED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
             media_type = content_type or "image/jpeg"
             if media_type not in SUPPORTED_TYPES:
-                # iPhone sends image/heic, image/heif, etc. — default to jpeg
+                try:
+                    img = Image.open(io.BytesIO(file_bytes))
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=90)
+                    file_bytes = buf.getvalue()
+                    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+                except Exception:
+                    pass
                 media_type = "image/jpeg"
             content_blocks.append({
                 "type": "image",
