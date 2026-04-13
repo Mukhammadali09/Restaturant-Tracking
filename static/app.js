@@ -201,48 +201,68 @@ async function ocrUpload() {
   const fileInput = document.getElementById("ocrFile");
   const status = document.getElementById("ocrStatus");
   const resultsDiv = document.getElementById("ocrResults");
+  const files = fileInput.files;
 
-  if (!fileInput.files.length) { status.textContent = t("msg_select_photo"); return; }
+  if (!files.length) { status.textContent = t("msg_select_photo"); return; }
 
-  status.textContent = t("msg_scanning");
+  status.textContent = t("msg_scanning") + (files.length > 1 ? ` (1/${files.length})` : "");
   status.style.color = "var(--gold)";
   resultsDiv.style.display = "none";
 
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
+  let allItems = [];
+  let allRawText = "";
+  let errors = [];
 
-  try {
-    const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
-    const data = await res.json();
-
-    if (data.error) {
-      status.textContent = data.error;
-      status.style.color = "var(--red)";
-      return;
+  for (let i = 0; i < files.length; i++) {
+    if (files.length > 1) {
+      status.textContent = t("msg_scanning") + ` (${i + 1}/${files.length})`;
     }
+    const formData = new FormData();
+    formData.append("file", files[i]);
 
-    status.textContent = t("msg_found_items", data.parsed_items.length);
-    status.style.color = "var(--green)";
+    try {
+      const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
+      const data = await res.json();
 
-    document.getElementById("ocrRawText").textContent = data.raw_text;
+      if (data.error) {
+        errors.push(`${files[i].name}: ${data.error}`);
+        continue;
+      }
 
-    const tbody = document.querySelector("#ocrTable tbody");
-    tbody.innerHTML = "";
-    data.parsed_items.forEach((item, i) => {
-      tbody.innerHTML += `<tr>
-        <td><input type="checkbox" class="ocr-check" data-idx="${i}" checked /></td>
-        <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:120px" /></td>
-        <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="width:220px" /></td>
-        <td><input type="number" class="ocr-price" data-idx="${i}" value="${item.price}" min="0" style="width:110px" /></td>
-      </tr>`;
-    });
-
-    resultsDiv.style.display = "block";
-    document.getElementById("ocrSaveMsg").textContent = "";
-  } catch (e) {
-    status.textContent = t("msg_upload_fail", e.message);
-    status.style.color = "var(--red)";
+      allItems = allItems.concat(data.parsed_items);
+      allRawText += (allRawText ? "\n\n--- " + files[i].name + " ---\n\n" : "") + data.raw_text;
+    } catch (e) {
+      errors.push(`${files[i].name}: ${e.message}`);
+    }
   }
+
+  if (errors.length && !allItems.length) {
+    status.textContent = errors.join("; ");
+    status.style.color = "var(--red)";
+    return;
+  }
+
+  let msg = t("msg_found_items", allItems.length);
+  if (files.length > 1) msg += ` (${files.length} files)`;
+  if (errors.length) msg += ` | Errors: ${errors.join("; ")}`;
+  status.textContent = msg;
+  status.style.color = "var(--green)";
+
+  document.getElementById("ocrRawText").textContent = allRawText;
+
+  const tbody = document.querySelector("#ocrTable tbody");
+  tbody.innerHTML = "";
+  allItems.forEach((item, i) => {
+    tbody.innerHTML += `<tr>
+      <td><input type="checkbox" class="ocr-check" data-idx="${i}" checked /></td>
+      <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:120px" /></td>
+      <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="width:220px" /></td>
+      <td><input type="number" class="ocr-price" data-idx="${i}" value="${item.price}" min="0" style="width:110px" /></td>
+    </tr>`;
+  });
+
+  resultsDiv.style.display = "block";
+  document.getElementById("ocrSaveMsg").textContent = "";
 }
 
 async function ocrSaveItems() {
