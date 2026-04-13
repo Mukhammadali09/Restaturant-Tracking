@@ -53,62 +53,50 @@ Rules:
 #  PRIMARY: Claude Vision API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _parse_with_claude(files_list):
-    """Send one or more menu images/PDFs to Claude Vision in a SINGLE API call.
+def _prepare_image(file_bytes, content_type, filename):
+    """Convert a single file to a Claude API content block."""
+    is_pdf = filename.lower().endswith(".pdf")
 
-    files_list: list of (file_bytes, content_type, filename) tuples.
-    All files are sent as separate image/document blocks in one message,
-    so 10 menu pages = 1 API call instead of 10.
-    """
-    if not _HAS_ANTHROPIC or not ANTHROPIC_API_KEY:
-        raise ValueError("Anthropic SDK not available or ANTHROPIC_API_KEY not set")
+    if is_pdf:
+        b64_data = base64.b64encode(file_bytes).decode("utf-8")
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": b64_data,
+            },
+        }
 
+    # Force-convert ALL images to clean JPEG via Pillow
+    try:
+        img = Image.open(io.BytesIO(file_bytes))
+        MAX_DIM = 2048
+        if max(img.size) > MAX_DIM:
+            img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        file_bytes = buf.getvalue()
+    except Exception as e:
+        print(f"Pillow conversion failed for {filename}: {e}")
+
+    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": b64_data,
+        },
+    }
+
+
+def _call_claude(content_blocks):
+    """Send content blocks to Claude and parse the JSON response."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    # Build content blocks — one per file
-    content_blocks = []
-    for file_bytes, content_type, filename in files_list:
-        is_pdf = filename.lower().endswith(".pdf")
-
-        if is_pdf:
-            b64_data = base64.b64encode(file_bytes).decode("utf-8")
-            content_blocks.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": b64_data,
-                },
-            })
-        else:
-            # Force-convert ALL images to clean JPEG via Pillow
-            # Handles: HEIC, HEIF, PNG, BMP, TIFF, WebP, corrupt files
-            try:
-                img = Image.open(io.BytesIO(file_bytes))
-                # Resize large images (iPhone 12MP+ = 4032x3024)
-                MAX_DIM = 2048
-                if max(img.size) > MAX_DIM:
-                    img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
-                if img.mode in ("RGBA", "P", "LA"):
-                    img = img.convert("RGB")
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=85)
-                file_bytes = buf.getvalue()
-            except Exception as e:
-                print(f"Pillow conversion failed for {filename}: {e}")
-                # Last resort: use raw bytes and hope for the best
-
-            b64_data = base64.b64encode(file_bytes).decode("utf-8")
-            content_blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": b64_data,
-                },
-            })
-
-    # Add the extraction prompt after all images
     content_blocks.append({"type": "text", "text": MENU_EXTRACTION_PROMPT})
 
     message = client.messages.create(
@@ -119,12 +107,9 @@ def _parse_with_claude(files_list):
 
     raw = message.content[0].text.strip()
 
-    # Check if output was truncated (model hit max_tokens limit)
+    # Check if output was truncated
     if message.stop_reason == "max_tokens":
-        print(f"WARNING: Claude response was truncated at max_tokens. "
-              f"Output length: {len(raw)} chars. Attempting to salvage partial JSON.")
-        # Try to close the JSON array so we can parse what we got
-        # Find the last complete object (ending with })
+        print(f"WARNING: Claude response truncated. Salvaging partial JSON.")
         last_brace = raw.rfind("}")
         if last_brace > 0:
             raw = raw[:last_brace + 1] + "]"
@@ -139,7 +124,6 @@ def _parse_with_claude(files_list):
 
     items = json.loads(raw)
 
-    # Validate
     result = []
     for item in items:
         name = str(item.get("name", "")).strip()
@@ -149,6 +133,45 @@ def _parse_with_claude(files_list):
             result.append({"name": name, "price": int(price), "category": category})
 
     return result
+
+
+def _parse_with_claude(files_list):
+    """Send menu images/PDFs to Claude Vision.
+
+    Tries batch (all images in one call) first to save credits.
+    Falls back to one-at-a-time if batch fails (e.g. payload too large).
+    """
+    if not _HAS_ANTHROPIC or not ANTHROPIC_API_KEY:
+        raise ValueError("Anthropic SDK not available or ANTHROPIC_API_KEY not set")
+
+    # Prepare all image blocks
+    blocks = [_prepare_image(fb, ct, fn) for fb, ct, fn in files_list]
+
+    # Try batch first (1 API call for all images)
+    if len(blocks) > 1:
+        try:
+            return _call_claude(list(blocks))
+        except Exception as batch_err:
+            print(f"Batch failed ({len(blocks)} images): {batch_err}")
+            print("Falling back to one-at-a-time...")
+
+    # Fallback: process each image individually
+    all_items = []
+    last_err = None
+    for i, block in enumerate(blocks):
+        try:
+            items = _call_claude([block])
+            all_items.extend(items)
+            print(f"Image {i+1}/{len(blocks)}: extracted {len(items)} items")
+        except Exception as e:
+            print(f"Image {i+1}/{len(blocks)} failed: {e}")
+            last_err = e
+
+    if all_items:
+        return all_items
+
+    # Nothing worked
+    raise last_err or ValueError("No items extracted from any image")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
