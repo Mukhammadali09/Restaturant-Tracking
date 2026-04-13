@@ -16,7 +16,6 @@
       <button class="tab" data-tab="price-compare">Price Comparison</button>
       <button class="tab" data-tab="market">Market Analytics</button>
       <button class="tab" data-tab="restaurants">Restaurants</button>
-      <button class="tab" data-tab="reviews">Reviews</button>
     </nav>
   </header>
 
@@ -50,6 +49,36 @@
         </div>
       </form>
       <span id="menuFormMsg" class="form-msg"></span>
+    </section>
+
+    <!-- OCR Menu Upload -->
+    <section class="form-section">
+      <h2>Upload Menu Photo / PDF (OCR)</h2>
+      <p class="hint">Upload a photo or PDF of a restaurant menu. The system will read it automatically and extract dishes and prices.</p>
+      <div class="form-row-inline">
+        <div class="form-row"><label>Restaurant</label><select id="ocrRestaurant" required></select></div>
+        <div class="form-row"><label>Menu File (photo or PDF)</label><input type="file" id="ocrFile" accept="image/*,.pdf" /></div>
+        <div class="form-row"><label>Collected By</label><input id="ocrBy" placeholder="Your name" /></div>
+        <div class="form-row" style="align-self:flex-end"><button id="ocrUploadBtn">Scan Menu</button></div>
+      </div>
+      <div id="ocrStatus" class="form-msg"></div>
+      <div id="ocrResults" style="display:none;margin-top:1rem">
+        <h3 style="font-size:.9rem;margin-bottom:.5rem;color:var(--text-muted)">Parsed Items — review, edit, and save</h3>
+        <div class="table-scroll">
+          <table id="ocrTable">
+            <thead><tr><th>Include</th><th>Category</th><th>Dish Name</th><th>Price (UZS)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div style="margin-top:.6rem;display:flex;gap:.5rem;align-items:center">
+          <button id="ocrSaveBtn">Save Selected Items</button>
+          <span id="ocrSaveMsg" class="form-msg"></span>
+        </div>
+        <details style="margin-top:.8rem">
+          <summary class="hint" style="cursor:pointer">View raw OCR text</summary>
+          <pre id="ocrRawText" class="hint" style="max-height:200px;overflow:auto"></pre>
+        </details>
+      </div>
     </section>
 
     <!-- CSV Upload -->
@@ -156,6 +185,25 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
 
   <!-- ═══ TAB 4: RESTAURANTS ═══ -->
   <main id="tab-restaurants" class="tab-content">
+    <section class="form-section">
+      <h2>Add New Restaurant</h2>
+      <form id="addRestaurantForm">
+        <div class="form-row-inline">
+          <div class="form-row"><label>Name</label><input id="arName" required placeholder="e.g. Novikov Cafe" /></div>
+          <div class="form-row"><label>Cuisine</label><input id="arCuisine" required placeholder="e.g. Italian / Mediterranean" /></div>
+          <div class="form-row"><label>Address</label><input id="arAddress" required placeholder="e.g. Ukchi St 1A" /></div>
+          <div class="form-row"><label>District</label><input id="arDistrict" required placeholder="e.g. Shaykhantakhur" list="districtList" /><datalist id="districtList"></datalist></div>
+        </div>
+        <div class="form-row-inline">
+          <div class="form-row"><label>Phone</label><input id="arPhone" placeholder="+998 ..." /></div>
+          <div class="form-row"><label>Segment</label><select id="arSegment"><option>Premium</option><option>Luxury</option><option>Upper Casual</option></select></div>
+          <div class="form-row"><label>Avg Bill Min (UZS)</label><input id="arBillMin" type="number" min="0" placeholder="200000" /></div>
+          <div class="form-row"><label>Avg Bill Max (UZS)</label><input id="arBillMax" type="number" min="0" placeholder="700000" /></div>
+          <div class="form-row" style="align-self:flex-end"><button type="submit">Add Restaurant</button></div>
+        </div>
+      </form>
+      <span id="addRestMsg" class="form-msg"></span>
+    </section>
     <section class="controls">
       <label>Segment:</label><select id="restSegmentFilter"><option value="">All</option><option>Luxury</option><option>Premium</option><option>Upper Casual</option></select>
       <label>District:</label><select id="restDistrictFilter"><option value="">All</option></select>
@@ -163,31 +211,11 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
     <section class="data-section">
       <div class="table-scroll">
         <table id="restTable">
-          <thead><tr><th>Name</th><th>Cuisine</th><th>District</th><th>Segment</th><th>Bill Range (UZS)</th><th>Phone</th><th>Address</th></tr></thead>
+          <thead><tr><th>Name</th><th>Cuisine</th><th>District</th><th>Segment</th><th>Bill Range (UZS)</th><th>Phone</th><th>Address</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
     </section>
-  </main>
-
-  <!-- ═══ TAB 5: REVIEWS ═══ -->
-  <main id="tab-reviews" class="tab-content">
-    <section class="form-section">
-      <h2>Submit a Review</h2>
-      <form id="reviewForm">
-        <div class="form-row-inline">
-          <div class="form-row"><label>Restaurant</label><select id="revRestaurant" required></select></div>
-          <div class="form-row"><label>Your Name</label><input id="revName" type="text" required placeholder="e.g. Aziz M." /></div>
-          <div class="form-row"><label>Rating (1-5)</label><input id="revRating" type="number" min="1" max="5" required /></div>
-          <div class="form-row"><label>Bill Amount (UZS)</label><input id="revBill" type="number" min="0" required placeholder="350000" /></div>
-          <div class="form-row"><label>Visit Date</label><input id="revDate" type="date" required /></div>
-        </div>
-        <div class="form-row"><label>Comment</label><textarea id="revComment" rows="3" placeholder="Share your experience..."></textarea></div>
-        <button type="submit">Submit Review</button><span id="reviewFormMsg" class="form-msg"></span>
-      </form>
-    </section>
-    <section class="controls"><label>Filter:</label><select id="revFilterRestaurant"><option value="">All</option></select></section>
-    <section class="data-section"><h2>Recent Reviews</h2><div id="reviewsList"></div></section>
   </main>
 
   <footer><p>Tashkent Restaurant Market Tracker &mdash; All prices are manually collected from real menus</p></footer>

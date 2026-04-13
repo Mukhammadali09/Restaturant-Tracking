@@ -27,13 +27,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("pcCategory").addEventListener("change", loadPCDishes);
   document.getElementById("pcSearchBtn").addEventListener("click", runPriceCompare);
   document.getElementById("pcDish").addEventListener("change", runPriceCompare);
-  document.getElementById("reviewForm").addEventListener("submit", submitReview);
-  document.getElementById("revFilterRestaurant").addEventListener("change", loadReviews);
   document.getElementById("restSegmentFilter").addEventListener("change", renderRestaurantTable);
   document.getElementById("restDistrictFilter").addEventListener("change", renderRestaurantTable);
+  document.getElementById("addRestaurantForm").addEventListener("submit", addRestaurant);
+  document.getElementById("ocrUploadBtn").addEventListener("click", ocrUpload);
+  document.getElementById("ocrSaveBtn").addEventListener("click", ocrSaveItems);
 
   document.getElementById("mfDate").valueAsDate = new Date();
-  document.getElementById("revDate").valueAsDate = new Date();
 });
 
 function setupTabs() {
@@ -47,19 +47,20 @@ function setupTabs() {
       if (btn.dataset.tab === "price-compare") loadPriceCompareTab();
       if (btn.dataset.tab === "market") loadMarketAnalytics();
       if (btn.dataset.tab === "restaurants") renderRestaurantTable();
-      if (btn.dataset.tab === "reviews") loadReviews();
     });
   });
 }
 
 function populateAllSelects() {
-  ["mfRestaurant","browseRestaurant","revRestaurant","revFilterRestaurant"].forEach(id => {
+  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(id => {
     const el = document.getElementById(id);
     restaurants.forEach(r => { el.innerHTML += `<option value="${r.id}">${r.name}</option>`; });
   });
   const districts = [...new Set(restaurants.map(r => r.district))].sort();
   const df = document.getElementById("restDistrictFilter");
   districts.forEach(d => { df.innerHTML += `<option value="${d}">${d}</option>`; });
+  const dl = document.getElementById("districtList");
+  districts.forEach(d => { dl.innerHTML += `<option value="${d}">`; });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -192,6 +193,98 @@ async function deleteItem(id) {
   await deleteJSON(`/api/menu/${id}`);
   browseMenu();
   loadMenuManagement();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OCR MENU UPLOAD
+// ═══════════════════════════════════════════════════════════════════════════════
+async function ocrUpload() {
+  const fileInput = document.getElementById("ocrFile");
+  const status = document.getElementById("ocrStatus");
+  const resultsDiv = document.getElementById("ocrResults");
+
+  if (!fileInput.files.length) { status.textContent = "Select a photo or PDF first"; return; }
+
+  status.textContent = "Scanning menu... this may take a moment.";
+  status.style.color = "var(--gold)";
+  resultsDiv.style.display = "none";
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+
+  try {
+    const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
+    const data = await res.json();
+
+    if (data.error) {
+      status.textContent = data.error;
+      status.style.color = "var(--red)";
+      return;
+    }
+
+    status.textContent = `Found ${data.parsed_items.length} items. Review below and save.`;
+    status.style.color = "var(--green)";
+
+    // Show raw text
+    document.getElementById("ocrRawText").textContent = data.raw_text;
+
+    // Populate table
+    const tbody = document.querySelector("#ocrTable tbody");
+    tbody.innerHTML = "";
+    data.parsed_items.forEach((item, i) => {
+      tbody.innerHTML += `<tr>
+        <td><input type="checkbox" class="ocr-check" data-idx="${i}" checked /></td>
+        <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:120px" /></td>
+        <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="width:220px" /></td>
+        <td><input type="number" class="ocr-price" data-idx="${i}" value="${item.price}" min="0" style="width:110px" /></td>
+      </tr>`;
+    });
+
+    resultsDiv.style.display = "block";
+    document.getElementById("ocrSaveMsg").textContent = "";
+  } catch (e) {
+    status.textContent = "Upload failed: " + e.message;
+    status.style.color = "var(--red)";
+  }
+}
+
+async function ocrSaveItems() {
+  const rid = document.getElementById("ocrRestaurant").value;
+  const by = document.getElementById("ocrBy").value || "OCR Upload";
+  const msg = document.getElementById("ocrSaveMsg");
+
+  const rows = document.querySelectorAll("#ocrTable tbody tr");
+  const items = [];
+  rows.forEach(row => {
+    const idx = row.querySelector(".ocr-check").dataset.idx;
+    if (!row.querySelector(".ocr-check").checked) return;
+    items.push({
+      category: row.querySelector(".ocr-cat").value,
+      name: row.querySelector(".ocr-name").value,
+      price: +row.querySelector(".ocr-price").value,
+    });
+  });
+
+  if (!items.length) { msg.textContent = "No items selected"; return; }
+
+  const data = await postJSON("/api/menu/ocr/save", {
+    restaurant_id: +rid,
+    items: items,
+    collected_by: by,
+  });
+
+  msg.textContent = `Saved ${data.added} items!`;
+  msg.style.color = "var(--green)";
+  document.getElementById("ocrFile").value = "";
+  document.getElementById("ocrResults").style.display = "none";
+  document.getElementById("ocrStatus").textContent = "";
+  loadMenuManagement();
+  const browseRid = document.getElementById("browseRestaurant").value;
+  if (browseRid) browseMenu();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -350,44 +443,51 @@ function renderRestaurantTable() {
       <td><strong>${r.name}</strong></td><td>${r.cuisine}</td><td>${r.district}</td>
       <td>${r.price_segment}</td><td>${fmt(r.avg_bill_min)} – ${fmt(r.avg_bill_max)}</td>
       <td>${r.phone || "—"}</td><td>${r.address}</td>
+      <td><button class="btn-sm btn-del" onclick="deleteRestaurant(${r.id},'${escHtml(r.name)}')">Remove</button></td>
     </tr>`;
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 5: REVIEWS
-// ═══════════════════════════════════════════════════════════════════════════════
-async function loadReviews() {
-  const rid = document.getElementById("revFilterRestaurant").value;
-  const url = rid ? `/api/reviews?limit=30&restaurant_id=${rid}` : "/api/reviews?limit=30";
-  const reviews = await fetchJSON(url);
-  const container = document.getElementById("reviewsList");
-  container.innerHTML = "";
-  if (!reviews.length) { container.innerHTML = '<p class="hint">No reviews yet. Submit one above.</p>'; return; }
-  reviews.forEach(r => {
-    container.innerHTML += `
-      <div class="review-card">
-        <div class="rc-header"><span class="rc-name">${r.reviewer_name}</span><span class="rc-rating">${"★".repeat(r.rating)}${"☆".repeat(5-r.rating)}</span></div>
-        <div class="rc-meta">${r.restaurant_name} &middot; ${r.visit_date} &middot; ${fmt(r.bill_amount)} UZS</div>
-        <div class="rc-comment">${r.comment}</div>
-      </div>`;
+async function addRestaurant(e) {
+  e.preventDefault();
+  const data = {
+    name: document.getElementById("arName").value,
+    cuisine: document.getElementById("arCuisine").value,
+    address: document.getElementById("arAddress").value,
+    district: document.getElementById("arDistrict").value,
+    phone: document.getElementById("arPhone").value,
+    price_segment: document.getElementById("arSegment").value,
+    avg_bill_min: +document.getElementById("arBillMin").value || 0,
+    avg_bill_max: +document.getElementById("arBillMax").value || 0,
+  };
+  const r = await postJSON("/api/restaurants", data);
+  restaurants.push(r);
+
+  // Update selects
+  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(id => {
+    document.getElementById(id).innerHTML += `<option value="${r.id}">${r.name}</option>`;
   });
+
+  const msg = document.getElementById("addRestMsg");
+  msg.textContent = `${r.name} added!`;
+  setTimeout(() => msg.textContent = "", 3000);
+  document.getElementById("addRestaurantForm").reset();
+  renderRestaurantTable();
 }
 
-async function submitReview(e) {
-  e.preventDefault();
-  await postJSON("/api/reviews", {
-    restaurant_id: +document.getElementById("revRestaurant").value,
-    reviewer_name: document.getElementById("revName").value,
-    rating: +document.getElementById("revRating").value,
-    bill_amount: +document.getElementById("revBill").value,
-    visit_date: document.getElementById("revDate").value,
-    comment: document.getElementById("revComment").value,
+async function deleteRestaurant(id, name) {
+  if (!confirm(`Remove "${name}" and all its menu data? This cannot be undone.`)) return;
+  await deleteJSON(`/api/restaurants/${id}`);
+  restaurants = restaurants.filter(r => r.id !== id);
+
+  // Remove from selects
+  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(sid => {
+    const opt = document.querySelector(`#${sid} option[value="${id}"]`);
+    if (opt) opt.remove();
   });
-  document.getElementById("reviewFormMsg").textContent = "Review submitted!";
-  document.getElementById("reviewForm").reset();
-  document.getElementById("revDate").valueAsDate = new Date();
-  loadReviews();
+
+  renderRestaurantTable();
+  loadMenuManagement();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

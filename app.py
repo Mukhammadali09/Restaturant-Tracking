@@ -2,16 +2,15 @@
 
 import csv
 import io
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
-from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sqlalchemy import func
 
 import config
-from analytics import compute_daily_stats
-from models import DailyStat, MenuItem, PriceHistory, Restaurant, Review, db
+from models import MenuItem, PriceHistory, Restaurant, db
+from ocr import ocr_extract_text, parse_menu_text
 from seed import seed_database
 
 
@@ -24,15 +23,6 @@ def create_app():
     with app.app_context():
         db.create_all()
         seed_database()
-
-    scheduler = BackgroundScheduler(daemon=True)
-
-    def scheduled_analytics():
-        with app.app_context():
-            compute_daily_stats()
-
-    scheduler.add_job(scheduled_analytics, "cron", hour=0, minute=5)
-    scheduler.start()
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  STATIC
@@ -70,73 +60,12 @@ def create_app():
         db.session.commit()
         return jsonify(r.to_dict()), 201
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    #  REVIEWS
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    @app.route("/api/reviews")
-    def list_reviews():
-        restaurant_id = request.args.get("restaurant_id", type=int)
-        limit = request.args.get("limit", 50, type=int)
-        q = Review.query.order_by(Review.created_at.desc())
-        if restaurant_id:
-            q = q.filter_by(restaurant_id=restaurant_id)
-        return jsonify([r.to_dict() for r in q.limit(limit).all()])
-
-    @app.route("/api/reviews", methods=["POST"])
-    def add_review():
-        data = request.get_json()
-        review = Review(
-            restaurant_id=data["restaurant_id"],
-            reviewer_name=data["reviewer_name"],
-            rating=int(data["rating"]),
-            bill_amount=float(data["bill_amount"]),
-            comment=data.get("comment", ""),
-            visit_date=date.fromisoformat(data["visit_date"]),
-        )
-        db.session.add(review)
+    @app.route("/api/restaurants/<int:rid>", methods=["DELETE"])
+    def delete_restaurant(rid):
+        r = Restaurant.query.get_or_404(rid)
+        db.session.delete(r)
         db.session.commit()
-        compute_daily_stats(review.visit_date)
-        return jsonify(review.to_dict()), 201
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    #  DAILY STATS
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    @app.route("/api/stats/daily")
-    def daily_stats():
-        restaurant_id = request.args.get("restaurant_id", type=int)
-        days = request.args.get("days", 30, type=int)
-        start = date.today() - timedelta(days=days)
-        q = DailyStat.query.filter(DailyStat.date >= start).order_by(DailyStat.date.desc())
-        if restaurant_id:
-            q = q.filter_by(restaurant_id=restaurant_id)
-        return jsonify([s.to_dict() for s in q.all()])
-
-    @app.route("/api/stats/summary")
-    def summary_stats():
-        days = request.args.get("days", 30, type=int)
-        start = date.today() - timedelta(days=days)
-        stats = DailyStat.query.filter(DailyStat.date >= start).all()
-        if not stats:
-            return jsonify({"total_reviews": 0, "avg_bill": 0, "avg_rating": 0, "restaurants_tracked": 0, "period_days": days})
-        total = sum(s.review_count for s in stats)
-        w_bill = sum(s.avg_bill * s.review_count for s in stats)
-        w_rating = sum(s.avg_rating * s.review_count for s in stats)
-        return jsonify({
-            "total_reviews": total,
-            "avg_bill": round(w_bill / total, 2) if total else 0,
-            "avg_rating": round(w_rating / total, 2) if total else 0,
-            "restaurants_tracked": len({s.restaurant_id for s in stats}),
-            "period_days": days,
-        })
-
-    @app.route("/api/stats/recompute", methods=["POST"])
-    def recompute():
-        days = request.json.get("days", 1) if request.json else 1
-        today = date.today()
-        count = sum(compute_daily_stats(today - timedelta(days=i)) for i in range(days))
-        return jsonify({"recomputed_restaurants": count, "days": days})
+        return jsonify({"deleted": rid})
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  MENU MANAGEMENT (core of the tool)
@@ -299,6 +228,58 @@ def create_app():
         return jsonify({"added": added, "skipped": skipped})
 
     # ═══════════════════════════════════════════════════════════════════════════
+    #  OCR MENU UPLOAD
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/menu/ocr", methods=["POST"])
+    def ocr_menu_upload():
+        """Upload a photo or PDF of a menu. OCR extracts text and parses dishes/prices."""
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"error": "Empty filename"}), 400
+
+        try:
+            raw_text = ocr_extract_text(f)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"OCR request failed: {str(e)}"}), 500
+
+        items = parse_menu_text(raw_text)
+        return jsonify({"raw_text": raw_text, "parsed_items": items})
+
+    @app.route("/api/menu/ocr/save", methods=["POST"])
+    def ocr_save_items():
+        """Save OCR-parsed items after user review/edit."""
+        data = request.get_json()
+        restaurant_id = data.get("restaurant_id")
+        items = data.get("items", [])
+        collected_by = data.get("collected_by", "OCR Upload")
+
+        if not restaurant_id:
+            return jsonify({"error": "restaurant_id required"}), 400
+
+        added = 0
+        for item in items:
+            mi = MenuItem(
+                restaurant_id=restaurant_id,
+                category=item.get("category", "Uncategorized"),
+                name=item["name"],
+                name_normalized=item["name"].lower().strip(),
+                price=int(item["price"]),
+                description=item.get("description", ""),
+                collected_by=collected_by,
+                collected_date=date.today(),
+            )
+            db.session.add(mi)
+            added += 1
+        db.session.commit()
+        return jsonify({"added": added})
+
+    # ═══════════════════════════════════════════════════════════════════════════
     #  PRICE COMPARISON
     # ═══════════════════════════════════════════════════════════════════════════
 
@@ -375,7 +356,7 @@ def create_app():
 
     @app.route("/api/analytics/segments")
     def analytics_segments():
-        """Menu-price-based segment analysis (no reviews needed)."""
+        """Menu-price-based segment analysis."""
         results = (
             db.session.query(
                 Restaurant.price_segment,
