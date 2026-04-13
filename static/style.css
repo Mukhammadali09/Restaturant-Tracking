@@ -89,4 +89,61 @@ tbody tr:hover{background:rgba(108,99,255,.06)}
 footer{text-align:center;padding:1.5rem 0;color:var(--text-muted);font-size:.75rem;border-top:1px solid var(--border)}
 
 /* === Responsive === */
-@media(max-width:700px){.charts{grid-template-columns:1fr}.form-row-inline{flex-direction:column}}
+@media(max-width:700px){
+  .charts{grid-template-columns:1fr}
+  .form-row-inline{flex-direction:column}
+}
+
+@media(max-width:480px){
+  body{padding:0 .5rem}
+
+  /* Header */
+  header{padding:1rem 0 0}
+  .header-top{flex-wrap:wrap;gap:.5rem}
+  .header-top h1{font-size:1.15rem;text-align:center;width:calc(100% - 50px)}
+  .subtitle{font-size:.75rem;margin-bottom:.3rem}
+  .lang-btn{position:static;transform:none;padding:.3rem .6rem;font-size:.75rem}
+
+  /* Tabs */
+  .tabs{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin:.8rem 0 .4rem;padding-bottom:.8rem}
+  .tab{padding:.4rem .5rem;font-size:.78rem;text-align:center;white-space:nowrap}
+
+  /* Cards */
+  .card-row{grid-template-columns:1fr 1fr;gap:.5rem;margin:.7rem 0}
+  .card{padding:.7rem;border-radius:8px}
+  .card-label{font-size:.65rem}
+  .card-value{font-size:1.1rem}
+
+  /* Forms */
+  .form-section{padding:.9rem;margin-bottom:1rem;border-radius:8px}
+  .form-section h2{font-size:.9rem}
+  .hint{font-size:.75rem;margin-bottom:.5rem}
+  .form-row{min-width:0}
+  .form-row label{font-size:.72rem}
+  select,input,textarea{font-size:.82rem;padding:.4rem .55rem}
+  button{padding:.45rem .8rem;font-size:.82rem;width:100%}
+  .form-row-inline{gap:.5rem}
+
+  /* File input */
+  input[type="file"]{font-size:.75rem}
+
+  /* Tables */
+  thead th{padding:.45rem .5rem;font-size:.65rem}
+  tbody td{padding:.4rem .5rem;font-size:.77rem}
+  .inline-price{width:85px !important;font-size:.78rem;padding:.25rem .35rem}
+  .btn-sm{padding:.25rem .45rem;font-size:.68rem}
+
+  /* Charts */
+  .chart-box{padding:.8rem;border-radius:8px}
+  .chart-box h2{font-size:.82rem}
+
+  /* Other */
+  .empty-state{padding:1.2rem;font-size:.82rem}
+  footer{padding:1rem 0;font-size:.7rem}
+  .data-section h2{font-size:.9rem}
+
+  /* Controls (filters) */
+  .controls{gap:.4rem}
+  .controls label{font-size:.75rem}
+  .controls select{font-size:.78rem}
+}
