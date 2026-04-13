@@ -436,7 +436,7 @@ async function runCompetitiveAnalysis() {
     </tr>`;
   });
 
-  // Common dishes table
+  // Common dishes table — with fuzzy match details
   const dTbody = document.querySelector("#compDishTable tbody");
   dTbody.innerHTML = "";
   if (data.common_dishes.length === 0) {
@@ -445,13 +445,25 @@ async function runCompetitiveAnalysis() {
     data.common_dishes.forEach(d => {
       const cls = d.diff_pct > 0 ? "price-higher" : d.diff_pct < 0 ? "price-lower" : "price-same";
       const sign = d.diff_pct > 0 ? "+" : "";
-      // Build competitor tooltip
-      const compDetail = d.competitor_prices.map(p => `${p.name}: ${fmt(p.price)}`).join(", ");
+      // Build competitor detail with matched names
+      const compDetail = d.competitor_prices.map(p => {
+        const nameNote = p.matched_name && p.matched_name !== d.name
+          ? ` <span class="muted" style="font-size:.72rem">(${p.matched_name})</span>` : "";
+        const simBadge = p.similarity < 100
+          ? ` <span class="muted" style="font-size:.68rem">${p.similarity}%</span>` : "";
+        return `${p.name}: ${fmt(p.price)}${nameNote}${simBadge}`;
+      }).join("<br>");
+      // Show matched competitor names below avg
+      const matchedNames = d.competitor_prices
+        .filter(p => p.matched_name && p.matched_name !== d.name)
+        .map(p => `<span class="muted" style="font-size:.7rem">${p.name}: "${p.matched_name}"</span>`)
+        .join(", ");
+      const matchNote = matchedNames ? `<br>${matchedNames}` : "";
       dTbody.innerHTML += `<tr>
         <td><strong>${d.name}</strong></td>
         <td>${d.category}</td>
         <td>${fmt(d.base_price)}</td>
-        <td title="${compDetail}">${fmt(d.competitors_avg)}</td>
+        <td><span title="${d.competitor_prices.map(p => p.name + ': ' + fmt(p.price)).join(', ')}">${fmt(d.competitors_avg)}</span>${matchNote}</td>
         <td class="${cls}">${sign}${d.diff_pct}%</td>
       </tr>`;
     });

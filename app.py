@@ -2,7 +2,9 @@
 
 import csv
 import io
+import re
 from datetime import date, datetime, timezone
+from difflib import SequenceMatcher
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -12,6 +14,146 @@ import config
 from models import MenuItem, PriceHistory, Restaurant, db
 from ocr import parse_menu_image
 from seed import seed_database
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  FUZZY DISH MATCHING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Patterns to strip from dish names before comparison
+_RE_PARENS = re.compile(r"\([^)]*\)")
+_RE_VOLUME = re.compile(
+    r"\b\d+(\.\d+)?\s*(ml|l|g|kg|oz|cl|mg|гр|мл|л)\b", re.IGNORECASE
+)
+_RE_TRAILING_NUM = re.compile(r"\s+\d+\s*$")
+_RE_WHITESPACE = re.compile(r"\s+")
+
+
+def _core_name(name):
+    """Extract the core dish name by stripping volumes, sizes, parenthetical info."""
+    s = name.lower().strip()
+    s = _RE_PARENS.sub("", s)       # Remove (glass), (bottle), (750ml), etc.
+    s = _RE_VOLUME.sub("", s)       # Remove 70ml, 200g, 1l, etc.
+    s = _RE_TRAILING_NUM.sub("", s) # Remove trailing numbers like "... 750"
+    s = _RE_WHITESPACE.sub(" ", s).strip()
+    return s
+
+
+def _dish_similarity(name1, name2):
+    """Compute similarity between two dish names. Returns 0.0-1.0.
+
+    Strategy:
+    - Exact core names → 1.0
+    - One name is a token subset of the other (e.g. "Fries" ⊂ "French Fries",
+      "Caesar Salad" ⊂ "Caesar Salad with Chicken") → 0.80–1.0
+    - Otherwise average containment, Jaccard, and sequence similarity.
+      This avoids false positives like "Grilled Salmon" vs "Grilled Chicken"
+      where SequenceMatcher alone gives misleadingly high scores.
+    """
+    c1 = _core_name(name1)
+    c2 = _core_name(name2)
+
+    if c1 == c2:
+        return 1.0
+    if not c1 or not c2:
+        return 0.0
+
+    tokens1 = set(c1.split())
+    tokens2 = set(c2.split())
+
+    # Containment: fraction of smaller set's tokens found in larger set
+    smaller = tokens1 if len(tokens1) <= len(tokens2) else tokens2
+    larger = tokens1 if len(tokens1) > len(tokens2) else tokens2
+    containment = len(smaller & larger) / len(smaller) if smaller else 0.0
+
+    # Jaccard
+    union = tokens1 | tokens2
+    jaccard = len(tokens1 & tokens2) / len(union) if union else 0.0
+
+    # If all tokens from the shorter name appear in the longer name,
+    # it's very likely the same dish with extra description
+    if containment >= 1.0:
+        return 0.80 + 0.20 * jaccard
+
+    # Sequence similarity (catches spelling variants like "Tom Yam" / "Tom Yum")
+    seq_sim = SequenceMatcher(None, c1, c2).ratio()
+
+    # Balanced average: requires agreement across all three measures,
+    # preventing false positives from SequenceMatcher alone
+    return (containment + jaccard + seq_sim) / 3.0
+
+
+# Similarity threshold: >= this value counts as "same dish"
+_MATCH_THRESHOLD = 0.6
+# Same-category bonus: if two dishes share a category, we relax the threshold
+_SAME_CAT_BONUS = 0.1
+
+
+def _find_matches(base_items, comp_items):
+    """Find fuzzy matches between base and competitor menu items.
+
+    Returns:
+      matched: list of (base_item, [(comp_item, similarity), ...])
+      unmatched_base: list of base items with no match
+      unmatched_comp: list of comp items with no match
+    """
+    # Pre-compute core names
+    base_cores = [(m, _core_name(m.name)) for m in base_items]
+    comp_cores = [(m, _core_name(m.name)) for m in comp_items]
+
+    # Build similarity matrix: for each base item, find best comp matches
+    # Group comp items by their best matching base item
+    matched = {}          # base_item.id -> (base_item, [(comp_item, sim)])
+    used_comp = set()     # comp item ids already matched
+
+    # Score all pairs, then greedily assign
+    pairs = []
+    for b_item, b_core in base_cores:
+        for c_item, c_core in comp_cores:
+            sim = _dish_similarity(b_item.name, c_item.name)
+            # Category bonus
+            threshold = _MATCH_THRESHOLD
+            if b_item.category == c_item.category:
+                threshold -= _SAME_CAT_BONUS
+            if sim >= threshold:
+                pairs.append((sim, b_item, c_item))
+
+    # Sort by similarity descending — greedily assign each comp item to
+    # its best base match (a comp item can only match one base dish,
+    # but multiple comp items from different restaurants can match the same base)
+    pairs.sort(key=lambda x: x[0], reverse=True)
+
+    # Track which (comp_id) is used per base_id to avoid duplicates within
+    # the same restaurant, but allow same dish from different restaurants
+    used_comp_per_base = {}  # base_id -> set of comp restaurant_ids we've matched
+
+    for sim, b_item, c_item in pairs:
+        bid = b_item.id
+        if bid not in matched:
+            matched[bid] = (b_item, [])
+            used_comp_per_base[bid] = {}
+
+        # Allow one match per competitor restaurant per base dish
+        crid = c_item.restaurant_id
+        if crid in used_comp_per_base[bid]:
+            continue
+
+        matched[bid][1].append((c_item, sim))
+        used_comp_per_base[bid][crid] = True
+        used_comp.add(c_item.id)
+
+    # Split into matched (with at least one comp match) and unmatched
+    matched_list = []
+    unmatched_base = []
+    for b_item, b_core in base_cores:
+        if b_item.id in matched and matched[b_item.id][1]:
+            matched_list.append(matched[b_item.id])
+        else:
+            unmatched_base.append(b_item)
+
+    unmatched_comp = [m for m, _ in comp_cores if m.id not in used_comp]
+
+    return matched_list, unmatched_base, unmatched_comp
 
 
 def create_app():
@@ -312,16 +454,29 @@ def create_app():
         if not dish:
             return jsonify({"error": "Provide ?dish= parameter"}), 400
 
+        # Try exact match first
         q = MenuItem.query.filter(MenuItem.name_normalized == dish.lower())
         if category:
             q = q.filter(MenuItem.category == category)
         items = q.order_by(MenuItem.price).all()
 
+        # Fall back to contains match
         if not items:
             q = MenuItem.query.filter(MenuItem.name_normalized.contains(dish.lower()))
             if category:
                 q = q.filter(MenuItem.category == category)
             items = q.order_by(MenuItem.price).all()
+
+        # Fall back to fuzzy match across all items
+        if not items:
+            all_q = MenuItem.query
+            if category:
+                all_q = all_q.filter(MenuItem.category == category)
+            all_items = all_q.all()
+            for m in all_items:
+                if _dish_similarity(dish, m.name) >= _MATCH_THRESHOLD:
+                    items.append(m)
+            items.sort(key=lambda m: m.price)
 
         total_restaurants = Restaurant.query.count()
         prices = [m.price for m in items]
@@ -436,65 +591,81 @@ def create_app():
                 "diff_pct": cat_diff,
             })
 
-        # --- Common dishes (matching by name_normalized) ---
-        base_dish_map = {}
-        for m in base_items:
-            base_dish_map[m.name_normalized] = m
-        comp_dish_map = {}
-        for m in comp_items:
-            comp_dish_map.setdefault(m.name_normalized, []).append(m)
+        # --- Fuzzy-matched common dishes ---
+        matched, unmatched_base, unmatched_comp = _find_matches(
+            base_items, comp_items,
+        )
 
         common_dishes = []
-        for norm, base_m in base_dish_map.items():
-            if norm in comp_dish_map:
-                c_items = comp_dish_map[norm]
-                c_prices = [m.price for m in c_items]
-                c_avg = round(sum(c_prices) / len(c_prices))
-                diff = round((base_m.price - c_avg) / c_avg * 100, 1) if c_avg > 0 else 0
-                common_dishes.append({
-                    "name": base_m.name,
-                    "category": base_m.category,
-                    "base_price": base_m.price,
-                    "competitor_prices": [{
-                        "id": m.restaurant_id,
-                        "name": m.restaurant.name if m.restaurant else "Unknown",
-                        "price": m.price,
-                    } for m in c_items],
-                    "competitors_avg": c_avg,
-                    "diff_pct": diff,
-                })
+        matched_comp_ids = set()  # track which comp items were matched
+        for base_m, comp_matches in matched:
+            c_prices = [m.price for m, _sim in comp_matches]
+            c_avg = round(sum(c_prices) / len(c_prices))
+            diff = round((base_m.price - c_avg) / c_avg * 100, 1) if c_avg > 0 else 0
+            # Build competitor details with match info
+            comp_details = []
+            for m, sim in comp_matches:
+                matched_comp_ids.add(m.id)
+                detail = {
+                    "id": m.restaurant_id,
+                    "name": m.restaurant.name if m.restaurant else "Unknown",
+                    "price": m.price,
+                    "matched_name": m.name,
+                    "similarity": round(sim * 100),
+                }
+                comp_details.append(detail)
+            common_dishes.append({
+                "name": base_m.name,
+                "category": base_m.category,
+                "base_price": base_m.price,
+                "competitor_prices": comp_details,
+                "competitors_avg": c_avg,
+                "diff_pct": diff,
+            })
         common_dishes.sort(key=lambda x: abs(x["diff_pct"]), reverse=True)
 
         # --- Dishes unique to base (your competitive advantages) ---
-        unique_to_base = []
-        for norm, base_m in base_dish_map.items():
-            if norm not in comp_dish_map:
-                unique_to_base.append({
-                    "name": base_m.name,
-                    "category": base_m.category,
-                    "price": base_m.price,
-                })
+        unique_to_base = [{
+            "name": m.name, "category": m.category, "price": m.price,
+        } for m in unmatched_base]
 
         # --- Dishes missing from base (competitor offerings you lack) ---
-        missing_from_base = {}
-        for norm, c_items in comp_dish_map.items():
-            if norm not in base_dish_map:
-                if norm not in missing_from_base:
-                    prices = [m.price for m in c_items]
-                    missing_from_base[norm] = {
-                        "name": c_items[0].name,
-                        "category": c_items[0].category,
-                        "available_at": list(set(
-                            m.restaurant.name for m in c_items if m.restaurant
-                        )),
-                        "avg_price": round(sum(prices) / len(prices)),
-                        "count": len(set(m.restaurant_id for m in c_items)),
-                    }
-        missing_list = sorted(
-            missing_from_base.values(), key=lambda x: x["count"], reverse=True
-        )
+        # Group unmatched competitor items by core name
+        missing_groups = {}
+        for m in unmatched_comp:
+            core = _core_name(m.name)
+            if core not in missing_groups:
+                missing_groups[core] = {
+                    "name": m.name,
+                    "category": m.category,
+                    "items": [],
+                }
+            missing_groups[core]["items"].append(m)
 
-        # --- Per-competitor summary ---
+        missing_list = []
+        for core, group in missing_groups.items():
+            items = group["items"]
+            prices = [m.price for m in items]
+            missing_list.append({
+                "name": group["name"],
+                "category": group["category"],
+                "available_at": list(set(
+                    m.restaurant.name for m in items if m.restaurant
+                )),
+                "avg_price": round(sum(prices) / len(prices)),
+                "count": len(set(m.restaurant_id for m in items)),
+            })
+        missing_list.sort(key=lambda x: x["count"], reverse=True)
+
+        # --- Per-competitor summary (with fuzzy match counts) ---
+        # Count how many matched items came from each competitor
+        comp_match_counts = {}
+        for _base_m, comp_matches in matched:
+            for m, _sim in comp_matches:
+                comp_match_counts[m.restaurant_id] = (
+                    comp_match_counts.get(m.restaurant_id, 0) + 1
+                )
+
         comp_summaries = []
         for cid in comp_ids:
             r = comp_map.get(cid)
@@ -503,9 +674,6 @@ def create_app():
             r_items = [m for m in comp_items if m.restaurant_id == cid]
             r_prices = [m.price for m in r_items]
             r_avg = round(sum(r_prices) / len(r_prices)) if r_prices else 0
-            # Count common dishes with base
-            r_norms = set(m.name_normalized for m in r_items)
-            overlap = len(r_norms & set(base_dish_map.keys()))
             comp_summaries.append({
                 "id": cid,
                 "name": r.name,
@@ -513,7 +681,7 @@ def create_app():
                 "segment": r.price_segment,
                 "item_count": len(r_items),
                 "avg_price": r_avg,
-                "common_dishes": overlap,
+                "common_dishes": comp_match_counts.get(cid, 0),
                 "diff_pct": round((base_avg - r_avg) / r_avg * 100, 1) if r_avg > 0 and base_avg > 0 else 0,
             })
 
