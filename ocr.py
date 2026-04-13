@@ -31,20 +31,27 @@ MENU_EXTRACTION_PROMPT = """Extract EVERY item with its price from ALL pages/ima
 
 Return ONLY a valid JSON array — no explanation, no markdown, just the array.
 Each element must have exactly these keys:
-- "name": the item name as printed (include volume/size like "750ml" or "0.7" for drinks; omit markers V, N, circled icons)
+- "name": the dish/item name TRANSLATED TO ENGLISH (if menu is in Russian or another language, translate the name to English). Include volume/size like "750ml" for drinks. Omit markers V, N, circled icons.
 - "price": the price as a plain integer in UZS (e.g. 280000 not "280 000")
-- "category": the section/category header this item belongs to, in Title Case
+- "category": use one of these STANDARDIZED categories (pick the closest match):
+  "Cold Appetizers", "Hot Appetizers", "Salads", "Soups", "Pasta", "Risotto",
+  "Seafood", "Meat Dishes", "Poultry", "Grilled", "Sushi & Rolls", "Tempura",
+  "Side Dishes", "Sauces", "Desserts", "Bakery",
+  "Champagne", "Sparkling Wine", "White Wine", "Red Wine", "Rose Wine",
+  "Wine By Glass", "Vodka", "Whisky", "Cognac & Brandy", "Gin", "Rum", "Tequila",
+  "Cocktails", "Beer", "Soft Drinks", "Tea & Coffee", "Water & Juice",
+  "Raw Bar"
+  If none fit, create a short English category name in Title Case.
 
 Rules:
 - Process EVERY page/image — do not skip any page
 - Include EVERY item: food dishes, wines, spirits, cocktails, beers, soft drinks — everything with a price
+- ALWAYS translate names to English (e.g. "Куриная грудка с гуйкамоле" → "Chicken Breast with Guacamole")
 - Read each column independently; do NOT merge text across columns
 - Prices in Uzbekistan are typically 5–7 digits (e.g. 70000 … 12000000)
 - Convert spaced prices: "280 000" → 280000
 - Dual prices (glass / bottle) like "108 000 / 2 157 000": create TWO entries — one with "(glass)" suffix at the lower price, one with "(bottle)" suffix at the higher price
 - Strip menu markers (V) vegetarian, (N) new, circled letters, etc.
-- For nested sub-sections (e.g. "Ceviche" under "Raw Bar"), use the parent section as category
-- For wine regions (e.g. "Tuscany" under "Red Wine Italy"), use "Red Wine Italy" or similar top-level section as category
 - Do NOT stop early — extract every single item from every page
 """
 

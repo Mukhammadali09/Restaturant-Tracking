@@ -85,6 +85,18 @@ tbody tr:hover{background:rgba(108,99,255,.06)}
 /* === Empty state === */
 .empty-state{background:var(--surface);border:1px dashed var(--border);border-radius:12px;padding:2rem;text-align:center;color:var(--text-muted);margin:1rem 0}
 
+/* === Competitor Picker === */
+.competitor-picker{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.3rem}
+.competitor-picker label{display:flex;align-items:center;gap:.35rem;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:.4rem .7rem;font-size:.82rem;cursor:pointer;transition:all .2s;user-select:none}
+.competitor-picker label:hover{border-color:var(--accent)}
+.competitor-picker input:checked+span{color:var(--accent-light);font-weight:600}
+.competitor-picker input{accent-color:var(--accent)}
+
+/* === Comparison highlights === */
+.price-higher{color:var(--red);font-weight:600}
+.price-lower{color:var(--green);font-weight:600}
+.price-same{color:var(--text-muted)}
+
 /* === Footer === */
 footer{text-align:center;padding:1.5rem 0;color:var(--text-muted);font-size:.75rem;border-top:1px solid var(--border)}
 
@@ -146,4 +158,8 @@ footer{text-align:center;padding:1.5rem 0;color:var(--text-muted);font-size:.75r
   .controls{gap:.4rem}
   .controls label{font-size:.75rem}
   .controls select{font-size:.78rem}
+
+  /* Competitor picker */
+  .competitor-picker{gap:.35rem}
+  .competitor-picker label{padding:.3rem .5rem;font-size:.75rem}
 }

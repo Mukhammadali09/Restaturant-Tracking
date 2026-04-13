@@ -345,6 +345,201 @@ def create_app():
             "results": [m.to_dict() for m in items],
         })
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  COMPETITIVE COMPARISON — the core marketing tool
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/menu/compare-restaurants")
+    def compare_restaurants():
+        """Compare a base restaurant against selected competitors.
+
+        Query params:
+          base_id: int — your restaurant
+          competitor_ids: comma-separated ints — competitors to compare against
+          category: optional — filter to a specific category
+        """
+        base_id = request.args.get("base_id", type=int)
+        comp_str = request.args.get("competitor_ids", "")
+        cat_filter = request.args.get("category", "").strip()
+
+        if not base_id:
+            return jsonify({"error": "Provide ?base_id= parameter"}), 400
+        if not comp_str:
+            return jsonify({"error": "Provide ?competitor_ids= parameter"}), 400
+
+        comp_ids = [int(x) for x in comp_str.split(",") if x.strip().isdigit()]
+        if not comp_ids:
+            return jsonify({"error": "No valid competitor IDs"}), 400
+
+        base_rest = Restaurant.query.get_or_404(base_id)
+        comp_rests = Restaurant.query.filter(Restaurant.id.in_(comp_ids)).all()
+        comp_map = {r.id: r for r in comp_rests}
+
+        # Load menu items
+        base_q = MenuItem.query.filter_by(restaurant_id=base_id)
+        comp_q = MenuItem.query.filter(MenuItem.restaurant_id.in_(comp_ids))
+        if cat_filter:
+            base_q = base_q.filter_by(category=cat_filter)
+            comp_q = comp_q.filter(MenuItem.category == cat_filter)
+        base_items = base_q.all()
+        comp_items = comp_q.all()
+
+        # --- Summary ---
+        base_prices = [m.price for m in base_items]
+        comp_prices = [m.price for m in comp_items]
+        base_avg = round(sum(base_prices) / len(base_prices)) if base_prices else 0
+        comp_avg = round(sum(comp_prices) / len(comp_prices)) if comp_prices else 0
+
+        if comp_avg > 0 and base_avg > 0:
+            diff_pct = round((base_avg - comp_avg) / comp_avg * 100, 1)
+        else:
+            diff_pct = 0
+
+        # --- By category ---
+        base_by_cat = {}
+        for m in base_items:
+            base_by_cat.setdefault(m.category, []).append(m)
+        comp_by_cat = {}
+        for m in comp_items:
+            comp_by_cat.setdefault(m.category, []).append(m)
+
+        all_cats = sorted(set(list(base_by_cat.keys()) + list(comp_by_cat.keys())))
+        by_category = []
+        for cat in all_cats:
+            b_items = base_by_cat.get(cat, [])
+            c_items = comp_by_cat.get(cat, [])
+            b_avg = round(sum(m.price for m in b_items) / len(b_items)) if b_items else 0
+            c_avg = round(sum(m.price for m in c_items) / len(c_items)) if c_items else 0
+
+            # Per-competitor breakdown
+            per_comp = {}
+            for m in c_items:
+                per_comp.setdefault(m.restaurant_id, []).append(m.price)
+            comp_details = []
+            for cid, prices in per_comp.items():
+                r = comp_map.get(cid)
+                comp_details.append({
+                    "id": cid,
+                    "name": r.name if r else "Unknown",
+                    "avg": round(sum(prices) / len(prices)),
+                    "count": len(prices),
+                })
+
+            cat_diff = round((b_avg - c_avg) / c_avg * 100, 1) if c_avg > 0 and b_avg > 0 else 0
+            by_category.append({
+                "category": cat,
+                "base_avg": b_avg,
+                "base_count": len(b_items),
+                "competitors_avg": c_avg,
+                "competitors_count": len(c_items),
+                "competitor_details": comp_details,
+                "diff_pct": cat_diff,
+            })
+
+        # --- Common dishes (matching by name_normalized) ---
+        base_dish_map = {}
+        for m in base_items:
+            base_dish_map[m.name_normalized] = m
+        comp_dish_map = {}
+        for m in comp_items:
+            comp_dish_map.setdefault(m.name_normalized, []).append(m)
+
+        common_dishes = []
+        for norm, base_m in base_dish_map.items():
+            if norm in comp_dish_map:
+                c_items = comp_dish_map[norm]
+                c_prices = [m.price for m in c_items]
+                c_avg = round(sum(c_prices) / len(c_prices))
+                diff = round((base_m.price - c_avg) / c_avg * 100, 1) if c_avg > 0 else 0
+                common_dishes.append({
+                    "name": base_m.name,
+                    "category": base_m.category,
+                    "base_price": base_m.price,
+                    "competitor_prices": [{
+                        "id": m.restaurant_id,
+                        "name": m.restaurant.name if m.restaurant else "Unknown",
+                        "price": m.price,
+                    } for m in c_items],
+                    "competitors_avg": c_avg,
+                    "diff_pct": diff,
+                })
+        common_dishes.sort(key=lambda x: abs(x["diff_pct"]), reverse=True)
+
+        # --- Dishes unique to base (your competitive advantages) ---
+        unique_to_base = []
+        for norm, base_m in base_dish_map.items():
+            if norm not in comp_dish_map:
+                unique_to_base.append({
+                    "name": base_m.name,
+                    "category": base_m.category,
+                    "price": base_m.price,
+                })
+
+        # --- Dishes missing from base (competitor offerings you lack) ---
+        missing_from_base = {}
+        for norm, c_items in comp_dish_map.items():
+            if norm not in base_dish_map:
+                if norm not in missing_from_base:
+                    prices = [m.price for m in c_items]
+                    missing_from_base[norm] = {
+                        "name": c_items[0].name,
+                        "category": c_items[0].category,
+                        "available_at": list(set(
+                            m.restaurant.name for m in c_items if m.restaurant
+                        )),
+                        "avg_price": round(sum(prices) / len(prices)),
+                        "count": len(set(m.restaurant_id for m in c_items)),
+                    }
+        missing_list = sorted(
+            missing_from_base.values(), key=lambda x: x["count"], reverse=True
+        )
+
+        # --- Per-competitor summary ---
+        comp_summaries = []
+        for cid in comp_ids:
+            r = comp_map.get(cid)
+            if not r:
+                continue
+            r_items = [m for m in comp_items if m.restaurant_id == cid]
+            r_prices = [m.price for m in r_items]
+            r_avg = round(sum(r_prices) / len(r_prices)) if r_prices else 0
+            # Count common dishes with base
+            r_norms = set(m.name_normalized for m in r_items)
+            overlap = len(r_norms & set(base_dish_map.keys()))
+            comp_summaries.append({
+                "id": cid,
+                "name": r.name,
+                "cuisine": r.cuisine,
+                "segment": r.price_segment,
+                "item_count": len(r_items),
+                "avg_price": r_avg,
+                "common_dishes": overlap,
+                "diff_pct": round((base_avg - r_avg) / r_avg * 100, 1) if r_avg > 0 and base_avg > 0 else 0,
+            })
+
+        return jsonify({
+            "base": {
+                "id": base_rest.id,
+                "name": base_rest.name,
+                "cuisine": base_rest.cuisine,
+                "segment": base_rest.price_segment,
+                "item_count": len(base_items),
+                "avg_price": base_avg,
+            },
+            "competitors": comp_summaries,
+            "summary": {
+                "base_avg_price": base_avg,
+                "base_item_count": len(base_items),
+                "competitors_avg_price": comp_avg,
+                "competitors_item_count": len(comp_items),
+                "diff_pct": diff_pct,
+            },
+            "by_category": by_category,
+            "common_dishes": common_dishes,
+            "unique_to_base": unique_to_base,
+            "missing_from_base": missing_list,
+        })
+
     @app.route("/api/menu/coverage")
     def menu_coverage():
         """How many restaurants have menu data entered."""
@@ -463,6 +658,38 @@ def create_app():
             "menu_items": r[5],
             "avg_menu_price": round(r[6] or 0, 2),
         } for r in results])
+
+    @app.route("/api/analytics/category-coverage")
+    def analytics_category_coverage():
+        """Which categories each restaurant covers — for heatmap view."""
+        results = (
+            db.session.query(
+                Restaurant.id,
+                Restaurant.name,
+                MenuItem.category,
+                func.count(MenuItem.id),
+                func.avg(MenuItem.price),
+            )
+            .join(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .group_by(Restaurant.id, MenuItem.category)
+            .order_by(Restaurant.name, MenuItem.category)
+            .all()
+        )
+        # Group by restaurant
+        by_rest = {}
+        all_cats = set()
+        for r in results:
+            rid, rname, cat, count, avg_price = r
+            by_rest.setdefault(rid, {"id": rid, "name": rname, "categories": {}})
+            by_rest[rid]["categories"][cat] = {
+                "count": count,
+                "avg_price": round(avg_price or 0),
+            }
+            all_cats.add(cat)
+        return jsonify({
+            "restaurants": list(by_rest.values()),
+            "categories": sorted(all_cats),
+        })
 
     return app
 

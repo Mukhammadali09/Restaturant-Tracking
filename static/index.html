@@ -16,7 +16,8 @@
     <p class="subtitle" data-i18n="subtitle">Competitive intelligence for restaurant holdings &mdash; real data only</p>
     <nav class="tabs">
       <button class="tab active" data-tab="menu-mgmt" data-i18n="tab_menu">Menu Management</button>
-      <button class="tab" data-tab="price-compare" data-i18n="tab_price">Price Comparison</button>
+      <button class="tab" data-tab="competitive" data-i18n="tab_competitive">Competitive Analysis</button>
+      <button class="tab" data-tab="price-compare" data-i18n="tab_price">Price Lookup</button>
       <button class="tab" data-tab="market" data-i18n="tab_market">Market Analytics</button>
       <button class="tab" data-tab="restaurants" data-i18n="tab_restaurants">Restaurants</button>
     </nav>
@@ -111,7 +112,151 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
     </section>
   </main>
 
-  <!-- ═══ TAB 2: PRICE COMPARISON ═══ -->
+  <!-- ═══ TAB 2: COMPETITIVE ANALYSIS ═══ -->
+  <main id="tab-competitive" class="tab-content">
+    <section class="form-section">
+      <h2 data-i18n="comp_title">Competitive Analysis</h2>
+      <p class="hint" data-i18n="comp_hint">Select your restaurant and pick competitors to see a detailed side-by-side comparison.</p>
+      <div class="form-row-inline">
+        <div class="form-row">
+          <label data-i18n="comp_your_rest">Your Restaurant</label>
+          <select id="compBase"></select>
+        </div>
+        <div class="form-row">
+          <label data-i18n="comp_category_filter">Category Filter</label>
+          <select id="compCatFilter"><option value="" data-i18n="opt_all">All</option></select>
+        </div>
+        <div class="form-row" style="align-self:flex-end">
+          <button id="compRunBtn" data-i18n="comp_run">Run Comparison</button>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:.5rem">
+        <label data-i18n="comp_select_competitors">Select Competitors</label>
+        <div id="compCompetitors" class="competitor-picker"></div>
+      </div>
+    </section>
+
+    <!-- Results area (hidden until comparison runs) -->
+    <div id="compResults" style="display:none">
+
+      <!-- Summary cards -->
+      <section id="compSummary" class="card-row">
+        <div class="card"><span class="card-label" data-i18n="comp_your_avg">Your Avg Price</span><span id="compYourAvg" class="card-value">—</span></div>
+        <div class="card"><span class="card-label" data-i18n="comp_market_avg">Competitors Avg</span><span id="compMarketAvg" class="card-value">—</span></div>
+        <div class="card"><span class="card-label" data-i18n="comp_position">Price Position</span><span id="compPosition" class="card-value">—</span></div>
+        <div class="card"><span class="card-label" data-i18n="comp_common_count">Common Dishes</span><span id="compCommonCount" class="card-value">—</span></div>
+      </section>
+
+      <!-- Per-competitor overview -->
+      <section class="data-section">
+        <h2 data-i18n="comp_competitor_overview">Competitor Overview</h2>
+        <div class="table-scroll">
+          <table id="compOverviewTable">
+            <thead><tr>
+              <th data-i18n="lbl_restaurant">Restaurant</th>
+              <th data-i18n="th_cuisine">Cuisine</th>
+              <th data-i18n="th_segment">Segment</th>
+              <th data-i18n="th_items">Menu Items</th>
+              <th data-i18n="th_avg_price">Avg Price</th>
+              <th data-i18n="comp_common_count">Common Dishes</th>
+              <th data-i18n="comp_vs_you">vs You</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Category comparison chart -->
+      <section class="charts">
+        <div class="chart-box full-width">
+          <h2 data-i18n="comp_cat_chart">Average Price by Category</h2>
+          <canvas id="compCategoryChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Category breakdown table -->
+      <section class="data-section">
+        <h2 data-i18n="comp_cat_breakdown">Category Breakdown</h2>
+        <div class="table-scroll">
+          <table id="compCatTable">
+            <thead><tr>
+              <th data-i18n="lbl_category">Category</th>
+              <th data-i18n="comp_your_price">Your Avg</th>
+              <th data-i18n="comp_comp_price">Competitors Avg</th>
+              <th data-i18n="th_change">Difference</th>
+              <th data-i18n="comp_your_items">Your Items</th>
+              <th data-i18n="comp_comp_items">Their Items</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Common dishes comparison -->
+      <section class="data-section">
+        <h2 data-i18n="comp_common_dishes">Common Dishes — Price Comparison</h2>
+        <div class="table-scroll">
+          <table id="compDishTable">
+            <thead><tr>
+              <th data-i18n="th_dish">Dish</th>
+              <th data-i18n="lbl_category">Category</th>
+              <th data-i18n="comp_your_price">Your Price</th>
+              <th data-i18n="comp_comp_price">Competitors Avg</th>
+              <th data-i18n="th_change">Difference</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Dish price comparison chart -->
+      <section class="charts">
+        <div class="chart-box full-width">
+          <h2 data-i18n="comp_dish_chart">Dish Price Comparison (Top Differences)</h2>
+          <canvas id="compDishChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Missing dishes (competitor has, you don't) -->
+      <section class="data-section">
+        <h2 data-i18n="comp_missing">Menu Gaps — Dishes Competitors Offer</h2>
+        <p class="hint" data-i18n="comp_missing_hint">Dishes available at competitors but not on your menu. Consider adding these.</p>
+        <div class="table-scroll">
+          <table id="compMissingTable">
+            <thead><tr>
+              <th data-i18n="th_dish">Dish</th>
+              <th data-i18n="lbl_category">Category</th>
+              <th data-i18n="comp_available_at">Available At</th>
+              <th data-i18n="comp_comp_price">Avg Price</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Unique dishes (you have, competitors don't) -->
+      <section class="data-section">
+        <h2 data-i18n="comp_unique">Your Exclusive Dishes</h2>
+        <p class="hint" data-i18n="comp_unique_hint">Dishes only your restaurant offers — your unique selling points.</p>
+        <div class="table-scroll">
+          <table id="compUniqueTable">
+            <thead><tr>
+              <th data-i18n="th_dish">Dish</th>
+              <th data-i18n="lbl_category">Category</th>
+              <th data-i18n="lbl_price">Price (UZS)</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="compEmpty" class="empty-state" style="display:none">
+      <p data-i18n="comp_empty">Select your restaurant and at least one competitor, then click "Run Comparison".</p>
+    </div>
+  </main>
+
+  <!-- ═══ TAB 3: PRICE COMPARISON (single dish lookup) ═══ -->
   <main id="tab-price-compare" class="tab-content">
     <section class="form-section">
       <h2 data-i18n="tab_price">Price Comparison</h2>
@@ -144,13 +289,30 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
     </div>
   </main>
 
-  <!-- ═══ TAB 3: MARKET ANALYTICS ═══ -->
+  <!-- ═══ TAB 4: MARKET ANALYTICS ═══ -->
   <main id="tab-market" class="tab-content">
     <div id="marketEmpty" class="empty-state" style="display:none"><p data-i18n="market_empty">Enter menu data in <strong>Menu Management</strong> first to see analytics.</p></div>
+
+    <!-- Price Landscape: scatter chart showing restaurants by menu breadth vs avg price -->
+    <section class="charts" id="marketLandscape" style="display:none">
+      <div class="chart-box full-width">
+        <h2 data-i18n="market_landscape">Competitive Landscape — Menu Breadth vs Avg Price</h2>
+        <canvas id="landscapeChart"></canvas>
+      </div>
+    </section>
+
     <section class="charts" id="marketCharts">
       <div class="chart-box"><h2 data-i18n="chart_segment">Avg Menu Price by Segment</h2><canvas id="segmentChart"></canvas></div>
       <div class="chart-box"><h2 data-i18n="chart_district">Restaurants by District</h2><canvas id="districtChart"></canvas></div>
     </section>
+
+    <!-- Category Coverage Heatmap -->
+    <section class="data-section" id="categoryCoverageSection" style="display:none">
+      <h2 data-i18n="market_cat_coverage">Category Coverage by Restaurant</h2>
+      <p class="hint" data-i18n="market_cat_hint">Shows how many items each restaurant has per category. Darker = more items.</p>
+      <div class="table-scroll" id="categoryCoverageArea"></div>
+    </section>
+
     <section class="data-section">
       <h2 data-i18n="ranking_title">Restaurant Data Completeness</h2>
       <div class="table-scroll">
@@ -174,7 +336,7 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
     </section>
   </main>
 
-  <!-- ═══ TAB 4: RESTAURANTS ═══ -->
+  <!-- ═══ TAB 5: RESTAURANTS ═══ -->
   <main id="tab-restaurants" class="tab-content">
     <section class="form-section">
       <h2 data-i18n="add_rest">Add New Restaurant</h2>

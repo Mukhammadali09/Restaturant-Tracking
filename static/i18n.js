@@ -8,7 +8,7 @@ const TRANSLATIONS = {
     subtitle: "Competitive intelligence for restaurant holdings &mdash; real data only",
     // Tabs
     tab_menu: "Menu Management",
-    tab_price: "Price Comparison",
+    tab_price: "Price Lookup",
     tab_market: "Market Analytics",
     tab_restaurants: "Restaurants",
     // Coverage cards
@@ -135,6 +135,45 @@ const TRANSLATIONS = {
     pc_chart_title: "{0} — Price by Restaurant",
     // Avg suffix
     avg_suffix: "Avg",
+    // Competitive Analysis tab
+    tab_competitive: "Competitive Analysis",
+    comp_title: "Competitive Analysis",
+    comp_hint: "Select your restaurant and pick competitors to see a detailed side-by-side comparison.",
+    comp_your_rest: "Your Restaurant",
+    comp_category_filter: "Category Filter",
+    comp_select_competitors: "Select Competitors",
+    comp_run: "Run Comparison",
+    comp_your_avg: "Your Avg Price",
+    comp_market_avg: "Competitors Avg",
+    comp_position: "Price Position",
+    comp_common_count: "Common Dishes",
+    comp_competitor_overview: "Competitor Overview",
+    comp_vs_you: "vs You",
+    comp_cat_chart: "Average Price by Category",
+    comp_cat_breakdown: "Category Breakdown",
+    comp_your_price: "Your Price",
+    comp_comp_price: "Competitors Avg",
+    comp_your_items: "Your Items",
+    comp_comp_items: "Their Items",
+    comp_common_dishes: "Common Dishes — Price Comparison",
+    comp_dish_chart: "Dish Price Comparison (Top Differences)",
+    comp_missing: "Menu Gaps — Dishes Competitors Offer",
+    comp_missing_hint: "Dishes available at competitors but not on your menu. Consider adding these.",
+    comp_unique: "Your Exclusive Dishes",
+    comp_unique_hint: "Dishes only your restaurant offers — your unique selling points.",
+    comp_available_at: "Available At",
+    comp_empty: "Select your restaurant and at least one competitor, then click \"Run Comparison\".",
+    comp_no_common: "No common dishes found between your restaurant and selected competitors.",
+    comp_no_gaps: "No menu gaps — competitors don't have any dishes you're missing!",
+    comp_no_unique: "No exclusive dishes — all your dishes are also available at competitors.",
+    comp_competitors_label: "Competitors Avg",
+    // Market analytics enhancements
+    market_landscape: "Competitive Landscape — Menu Breadth vs Avg Price",
+    market_landscape_label: "Restaurants",
+    market_x_items: "Menu Items Count",
+    market_y_price: "Avg Price (UZS)",
+    market_cat_coverage: "Category Coverage by Restaurant",
+    market_cat_hint: "Shows how many items each restaurant has per category. Darker = more items.",
   },
 
   ru: {
@@ -143,7 +182,7 @@ const TRANSLATIONS = {
     subtitle: "Конкурентная аналитика для ресторанных холдингов &mdash; только реальные данные",
     // Tabs
     tab_menu: "Управление меню",
-    tab_price: "Сравнение цен",
+    tab_price: "Поиск цен",
     tab_market: "Аналитика рынка",
     tab_restaurants: "Рестораны",
     // Coverage cards
@@ -270,6 +309,45 @@ const TRANSLATIONS = {
     pc_chart_title: "{0} — Цена по ресторанам",
     // Avg suffix
     avg_suffix: "Ср.",
+    // Competitive Analysis tab
+    tab_competitive: "Конкурентный анализ",
+    comp_title: "Конкурентный анализ",
+    comp_hint: "Выберите свой ресторан и конкурентов для детального сравнения.",
+    comp_your_rest: "Ваш ресторан",
+    comp_category_filter: "Фильтр по категории",
+    comp_select_competitors: "Выберите конкурентов",
+    comp_run: "Запустить сравнение",
+    comp_your_avg: "Ваша средняя цена",
+    comp_market_avg: "Средняя конкурентов",
+    comp_position: "Ценовая позиция",
+    comp_common_count: "Общие блюда",
+    comp_competitor_overview: "Обзор конкурентов",
+    comp_vs_you: "vs Вы",
+    comp_cat_chart: "Средняя цена по категориям",
+    comp_cat_breakdown: "Разбивка по категориям",
+    comp_your_price: "Ваша цена",
+    comp_comp_price: "Средняя конкурентов",
+    comp_your_items: "Ваших позиций",
+    comp_comp_items: "Их позиций",
+    comp_common_dishes: "Общие блюда — Сравнение цен",
+    comp_dish_chart: "Сравнение цен по блюдам (топ различий)",
+    comp_missing: "Пробелы меню — Блюда у конкурентов",
+    comp_missing_hint: "Блюда, которые есть у конкурентов, но нет у вас. Рассмотрите добавление.",
+    comp_unique: "Ваши эксклюзивные блюда",
+    comp_unique_hint: "Блюда, которые есть только у вас — ваши уникальные предложения.",
+    comp_available_at: "Доступно в",
+    comp_empty: "Выберите свой ресторан и хотя бы одного конкурента, затем нажмите \"Запустить сравнение\".",
+    comp_no_common: "Не найдено общих блюд между вашим рестораном и выбранными конкурентами.",
+    comp_no_gaps: "Нет пробелов меню — у конкурентов нет блюд, которых нет у вас!",
+    comp_no_unique: "Нет эксклюзивных блюд — все ваши блюда также есть у конкурентов.",
+    comp_competitors_label: "Средняя конкурентов",
+    // Market analytics enhancements
+    market_landscape: "Конкурентный ландшафт — Широта меню vs Средняя цена",
+    market_landscape_label: "Рестораны",
+    market_x_items: "Кол-во позиций меню",
+    market_y_price: "Средняя цена (UZS)",
+    market_cat_coverage: "Покрытие категорий по ресторанам",
+    market_cat_hint: "Показывает количество позиций каждого ресторана по категориям. Темнее = больше позиций.",
   }
 };
 
@@ -305,6 +383,7 @@ function toggleLang() {
   if (activeTab) {
     const tab = activeTab.dataset.tab;
     if (tab === "menu-mgmt") loadMenuManagement();
+    if (tab === "competitive") loadCompetitiveTab();
     if (tab === "price-compare") loadPriceCompareTab();
     if (tab === "market") loadMarketAnalytics();
     if (tab === "restaurants") renderRestaurantTable();

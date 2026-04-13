@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("menuForm").addEventListener("submit", submitMenuItem);
   document.getElementById("csvUploadBtn").addEventListener("click", uploadCSV);
   document.getElementById("browseRestaurant").addEventListener("change", browseMenu);
+  document.getElementById("compRunBtn").addEventListener("click", runCompetitiveAnalysis);
   document.getElementById("pcCategory").addEventListener("change", loadPCDishes);
   document.getElementById("pcSearchBtn").addEventListener("click", runPriceCompare);
   document.getElementById("pcDish").addEventListener("change", runPriceCompare);
@@ -44,6 +45,7 @@ function setupTabs() {
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
       if (btn.dataset.tab === "menu-mgmt") loadMenuManagement();
+      if (btn.dataset.tab === "competitive") loadCompetitiveTab();
       if (btn.dataset.tab === "price-compare") loadPriceCompareTab();
       if (btn.dataset.tab === "market") loadMarketAnalytics();
       if (btn.dataset.tab === "restaurants") renderRestaurantTable();
@@ -52,7 +54,7 @@ function setupTabs() {
 }
 
 function populateAllSelects() {
-  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(id => {
+  ["mfRestaurant","browseRestaurant","ocrRestaurant","compBase"].forEach(id => {
     const el = document.getElementById(id);
     restaurants.forEach(r => { el.innerHTML += `<option value="${r.id}">${r.name}</option>`; });
   });
@@ -316,7 +318,191 @@ function escHtml(s) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 2: PRICE COMPARISON
+//  TAB 2: COMPETITIVE ANALYSIS
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadCompetitiveTab() {
+  // Populate base restaurant selector
+  const baseSel = document.getElementById("compBase");
+  baseSel.innerHTML = "";
+  restaurants.forEach(r => {
+    baseSel.innerHTML += `<option value="${r.id}">${r.name}</option>`;
+  });
+
+  // Category filter
+  const categories = await fetchJSON("/api/menu/categories");
+  const catSel = document.getElementById("compCatFilter");
+  catSel.innerHTML = `<option value="">${t("opt_all")}</option>`;
+  categories.forEach(c => { catSel.innerHTML += `<option value="${c}">${c}</option>`; });
+
+  // Populate competitor checkboxes
+  updateCompetitorPicker();
+  baseSel.addEventListener("change", updateCompetitorPicker);
+}
+
+function updateCompetitorPicker() {
+  const baseId = +document.getElementById("compBase").value;
+  const picker = document.getElementById("compCompetitors");
+  picker.innerHTML = "";
+  restaurants.forEach(r => {
+    if (r.id === baseId) return;
+    picker.innerHTML += `<label><input type="checkbox" name="comp" value="${r.id}" /><span>${r.name}</span></label>`;
+  });
+}
+
+function getSelectedCompetitors() {
+  return Array.from(document.querySelectorAll('#compCompetitors input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+}
+
+async function runCompetitiveAnalysis() {
+  const baseId = document.getElementById("compBase").value;
+  const compIds = getSelectedCompetitors();
+  const catFilter = document.getElementById("compCatFilter").value;
+
+  if (!compIds.length) {
+    document.getElementById("compResults").style.display = "none";
+    document.getElementById("compEmpty").style.display = "block";
+    return;
+  }
+
+  let url = `/api/menu/compare-restaurants?base_id=${baseId}&competitor_ids=${compIds.join(",")}`;
+  if (catFilter) url += `&category=${encodeURIComponent(catFilter)}`;
+
+  const data = await fetchJSON(url);
+
+  document.getElementById("compEmpty").style.display = "none";
+  document.getElementById("compResults").style.display = "block";
+
+  // Summary cards
+  document.getElementById("compYourAvg").textContent = fmt(data.summary.base_avg_price) + " UZS";
+  document.getElementById("compMarketAvg").textContent = fmt(data.summary.competitors_avg_price) + " UZS";
+
+  const diff = data.summary.diff_pct;
+  const posEl = document.getElementById("compPosition");
+  if (diff > 5) {
+    posEl.textContent = `+${diff}%`;
+    posEl.className = "card-value red";
+  } else if (diff < -5) {
+    posEl.textContent = `${diff}%`;
+    posEl.className = "card-value green";
+  } else {
+    posEl.textContent = `${diff > 0 ? "+" : ""}${diff}%`;
+    posEl.className = "card-value";
+  }
+  document.getElementById("compCommonCount").textContent = data.common_dishes.length;
+
+  // Competitor overview table
+  const oTbody = document.querySelector("#compOverviewTable tbody");
+  oTbody.innerHTML = "";
+  data.competitors.forEach(c => {
+    const cls = c.diff_pct > 0 ? "price-higher" : c.diff_pct < 0 ? "price-lower" : "price-same";
+    const sign = c.diff_pct > 0 ? "+" : "";
+    oTbody.innerHTML += `<tr>
+      <td><strong>${c.name}</strong></td>
+      <td>${c.cuisine}</td>
+      <td>${c.segment}</td>
+      <td>${c.item_count}</td>
+      <td>${fmt(c.avg_price)} UZS</td>
+      <td>${c.common_dishes}</td>
+      <td class="${cls}">${sign}${c.diff_pct}%</td>
+    </tr>`;
+  });
+
+  // Category comparison chart
+  const cats = data.by_category.filter(c => c.base_avg > 0 || c.competitors_avg > 0);
+  if (cats.length > 0) {
+    renderChart("compCategoryChart", "bar",
+      cats.map(c => c.category),
+      [
+        {label: data.base.name, data: cats.map(c => c.base_avg), backgroundColor: "#6c63ff", borderWidth: 0},
+        {label: t("comp_competitors_label"), data: cats.map(c => c.competitors_avg), backgroundColor: "#fbbf2480", borderColor: "#fbbf24", borderWidth: 1},
+      ],
+      {y: {beginAtZero: true}});
+  }
+
+  // Category breakdown table
+  const catTbody = document.querySelector("#compCatTable tbody");
+  catTbody.innerHTML = "";
+  data.by_category.forEach(c => {
+    const cls = c.diff_pct > 0 ? "price-higher" : c.diff_pct < 0 ? "price-lower" : "price-same";
+    const sign = c.diff_pct > 0 ? "+" : "";
+    catTbody.innerHTML += `<tr>
+      <td><strong>${c.category}</strong></td>
+      <td>${c.base_avg > 0 ? fmt(c.base_avg) : '<span class="muted">—</span>'}</td>
+      <td>${c.competitors_avg > 0 ? fmt(c.competitors_avg) : '<span class="muted">—</span>'}</td>
+      <td class="${cls}">${c.base_avg > 0 && c.competitors_avg > 0 ? sign + c.diff_pct + "%" : '<span class="muted">—</span>'}</td>
+      <td>${c.base_count}</td>
+      <td>${c.competitors_count}</td>
+    </tr>`;
+  });
+
+  // Common dishes table
+  const dTbody = document.querySelector("#compDishTable tbody");
+  dTbody.innerHTML = "";
+  if (data.common_dishes.length === 0) {
+    dTbody.innerHTML = `<tr><td colspan="5" class="empty-cell">${t("comp_no_common")}</td></tr>`;
+  } else {
+    data.common_dishes.forEach(d => {
+      const cls = d.diff_pct > 0 ? "price-higher" : d.diff_pct < 0 ? "price-lower" : "price-same";
+      const sign = d.diff_pct > 0 ? "+" : "";
+      // Build competitor tooltip
+      const compDetail = d.competitor_prices.map(p => `${p.name}: ${fmt(p.price)}`).join(", ");
+      dTbody.innerHTML += `<tr>
+        <td><strong>${d.name}</strong></td>
+        <td>${d.category}</td>
+        <td>${fmt(d.base_price)}</td>
+        <td title="${compDetail}">${fmt(d.competitors_avg)}</td>
+        <td class="${cls}">${sign}${d.diff_pct}%</td>
+      </tr>`;
+    });
+  }
+
+  // Dish price comparison chart (top 15 by biggest difference)
+  const topDishes = data.common_dishes.slice(0, 15);
+  if (topDishes.length > 0) {
+    renderChart("compDishChart", "bar",
+      topDishes.map(d => d.name.length > 25 ? d.name.substring(0, 22) + "..." : d.name),
+      [
+        {label: data.base.name, data: topDishes.map(d => d.base_price), backgroundColor: "#6c63ff", borderWidth: 0},
+        {label: t("comp_competitors_label"), data: topDishes.map(d => d.competitors_avg), backgroundColor: "#fbbf2480", borderColor: "#fbbf24", borderWidth: 1},
+      ],
+      {y: {beginAtZero: true}});
+  }
+
+  // Missing dishes table
+  const mTbody = document.querySelector("#compMissingTable tbody");
+  mTbody.innerHTML = "";
+  if (data.missing_from_base.length === 0) {
+    mTbody.innerHTML = `<tr><td colspan="4" class="empty-cell">${t("comp_no_gaps")}</td></tr>`;
+  } else {
+    data.missing_from_base.forEach(d => {
+      mTbody.innerHTML += `<tr>
+        <td>${d.name}</td>
+        <td>${d.category}</td>
+        <td>${d.available_at.join(", ")}</td>
+        <td>${fmt(d.avg_price)} UZS</td>
+      </tr>`;
+    });
+  }
+
+  // Unique dishes table
+  const uTbody = document.querySelector("#compUniqueTable tbody");
+  uTbody.innerHTML = "";
+  if (data.unique_to_base.length === 0) {
+    uTbody.innerHTML = `<tr><td colspan="3" class="empty-cell">${t("comp_no_unique")}</td></tr>`;
+  } else {
+    data.unique_to_base.forEach(d => {
+      uTbody.innerHTML += `<tr>
+        <td>${d.name}</td>
+        <td>${d.category}</td>
+        <td>${fmt(d.price)} UZS</td>
+      </tr>`;
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TAB 3: PRICE COMPARISON (single dish lookup)
 // ═══════════════════════════════════════════════════════════════════════════════
 async function loadPriceCompareTab() {
   const categories = await fetchJSON("/api/menu/categories");
@@ -398,18 +584,20 @@ async function runPriceCompare() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 3: MARKET ANALYTICS
+//  TAB 4: MARKET ANALYTICS
 // ═══════════════════════════════════════════════════════════════════════════════
 async function loadMarketAnalytics() {
-  const [segments, districts, ranking] = await Promise.all([
+  const [segments, districts, ranking, catCoverage] = await Promise.all([
     fetchJSON("/api/analytics/segments"),
     fetchJSON("/api/analytics/districts"),
     fetchJSON("/api/analytics/ranking"),
+    fetchJSON("/api/analytics/category-coverage"),
   ]);
 
   const hasData = segments.some(s => s.menu_items_entered > 0);
   document.getElementById("marketEmpty").style.display = hasData ? "none" : "block";
   document.getElementById("marketCharts").style.display = hasData ? "grid" : "none";
+  document.getElementById("marketLandscape").style.display = hasData ? "grid" : "none";
 
   if (hasData) {
     const segsWithData = segments.filter(s => s.avg_menu_price > 0);
@@ -420,6 +608,50 @@ async function loadMarketAnalytics() {
     renderChart("districtChart", "doughnut",
       districts.map(d => d.district),
       [{data:districts.map(d => d.restaurant_count),backgroundColor:COLORS}],{},false,true);
+
+    // Competitive Landscape scatter chart
+    const restsWithData = ranking.filter(r => r.menu_items > 0);
+    if (restsWithData.length > 0) {
+      const segColors = {"Luxury":"#f87171","Premium":"#6c63ff","Upper Casual":"#34d399"};
+      const scatterData = restsWithData.map(r => ({
+        x: r.menu_items,
+        y: r.avg_menu_price,
+        label: r.name,
+      }));
+      const scatterColors = restsWithData.map(r => segColors[r.price_segment] || "#60a5fa");
+
+      if (charts["landscapeChart"]) charts["landscapeChart"].destroy();
+      charts["landscapeChart"] = new Chart(document.getElementById("landscapeChart"), {
+        type: "bubble",
+        data: {
+          datasets: [{
+            label: t("market_landscape_label"),
+            data: scatterData.map((d, i) => ({x: d.x, y: d.y, r: 8})),
+            backgroundColor: scatterColors.map(c => c + "99"),
+            borderColor: scatterColors,
+            borderWidth: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {display: false},
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const d = scatterData[ctx.dataIndex];
+                  return `${d.label}: ${d.x} items, avg ${fmt(d.y)} UZS`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {title: {display: true, text: t("market_x_items"), color: "#9ca3af"}, ticks: {color: "#9ca3af"}, grid: {color: "#2a2d3a"}},
+            y: {title: {display: true, text: t("market_y_price"), color: "#9ca3af"}, ticks: {color: "#9ca3af"}, grid: {color: "#2a2d3a"}, beginAtZero: true},
+          }
+        }
+      });
+    }
   }
 
   const rtbody = document.querySelector("#rankingTable tbody");
@@ -435,6 +667,52 @@ async function loadMarketAnalytics() {
 
   fillTable("#segmentTable tbody", segments, ["segment","restaurant_count","avg_menu_price","menu_items_entered"]);
   fillTable("#districtTable tbody", districts, ["district","restaurant_count","avg_menu_price","menu_items_entered"]);
+
+  // Category Coverage Heatmap
+  if (catCoverage.restaurants.length > 0 && catCoverage.categories.length > 0) {
+    document.getElementById("categoryCoverageSection").style.display = "block";
+    renderCategoryCoverage(catCoverage);
+  } else {
+    document.getElementById("categoryCoverageSection").style.display = "none";
+  }
+}
+
+function renderCategoryCoverage(data) {
+  const cats = data.categories;
+  const rests = data.restaurants;
+
+  // Find max count for color scaling
+  let maxCount = 1;
+  rests.forEach(r => {
+    Object.values(r.categories).forEach(c => {
+      if (c.count > maxCount) maxCount = c.count;
+    });
+  });
+
+  let html = '<table><thead><tr><th data-i18n="lbl_restaurant">' + t("lbl_restaurant") + '</th>';
+  cats.forEach(cat => {
+    const shortCat = cat.length > 12 ? cat.substring(0, 10) + "…" : cat;
+    html += `<th style="writing-mode:vertical-lr;transform:rotate(180deg);font-size:.65rem;padding:.3rem;max-width:30px" title="${cat}">${shortCat}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  rests.forEach(r => {
+    html += `<tr><td style="white-space:nowrap;font-size:.78rem"><strong>${r.name}</strong></td>`;
+    cats.forEach(cat => {
+      const c = r.categories[cat];
+      if (c) {
+        const intensity = Math.min(c.count / maxCount, 1);
+        const alpha = (0.15 + intensity * 0.85).toFixed(2);
+        html += `<td style="text-align:center;background:rgba(108,99,255,${alpha});font-size:.72rem;padding:.2rem" title="${cat}: ${c.count} items, avg ${fmt(c.avg_price)} UZS">${c.count}</td>`;
+      } else {
+        html += `<td style="text-align:center;color:var(--text-muted);font-size:.68rem;padding:.2rem">—</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+
+  document.getElementById("categoryCoverageArea").innerHTML = html;
 }
 
 function fillTable(sel, data, keys) {
@@ -485,7 +763,7 @@ async function addRestaurant(e) {
   const r = await postJSON("/api/restaurants", data);
   restaurants.push(r);
 
-  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(id => {
+  ["mfRestaurant","browseRestaurant","ocrRestaurant","compBase"].forEach(id => {
     document.getElementById(id).innerHTML += `<option value="${r.id}">${r.name}</option>`;
   });
 
@@ -501,7 +779,7 @@ async function deleteRestaurant(id, name) {
   await deleteJSON(`/api/restaurants/${id}`);
   restaurants = restaurants.filter(r => r.id !== id);
 
-  ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(sid => {
+  ["mfRestaurant","browseRestaurant","ocrRestaurant","compBase"].forEach(sid => {
     const opt = document.querySelector(`#${sid} option[value="${id}"]`);
     if (opt) opt.remove();
   });
