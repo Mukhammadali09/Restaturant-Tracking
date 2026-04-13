@@ -14,6 +14,7 @@ let charts = {};
 // ═══════════════════════════════════════════════════════════════════════════════
 document.addEventListener("DOMContentLoaded", async () => {
   restaurants = await fetchJSON("/api/restaurants");
+  applyLanguage();
   setupTabs();
   populateAllSelects();
 
@@ -88,7 +89,7 @@ async function loadMenuManagement() {
   const tbody = document.querySelector("#historyTable tbody");
   tbody.innerHTML = "";
   if (history.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">No price changes yet</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${t("msg_no_changes")}</td></tr>`;
   } else {
     history.forEach(h => {
       const cls = h.new_price > h.old_price ? "diff-negative" : "diff-positive";
@@ -116,14 +117,13 @@ async function submitMenuItem(e) {
     collected_date: document.getElementById("mfDate").value || null,
   });
   const msg = document.getElementById("menuFormMsg");
-  msg.textContent = "Item added!";
+  msg.textContent = t("msg_item_added");
   setTimeout(() => msg.textContent = "", 3000);
   document.getElementById("mfCategory").value = "";
   document.getElementById("mfName").value = "";
   document.getElementById("mfPrice").value = "";
   document.getElementById("mfDesc").value = "";
   loadMenuManagement();
-  // Refresh browse if same restaurant
   const browseRid = document.getElementById("browseRestaurant").value;
   if (browseRid) browseMenu();
 }
@@ -131,14 +131,14 @@ async function submitMenuItem(e) {
 async function uploadCSV() {
   const fileInput = document.getElementById("csvFile");
   const msg = document.getElementById("csvMsg");
-  if (!fileInput.files.length) { msg.textContent = "Select a CSV file first"; return; }
+  if (!fileInput.files.length) { msg.textContent = t("msg_select_csv"); return; }
   const formData = new FormData();
   formData.append("file", fileInput.files[0]);
   const res = await fetch(API + "/api/menu/csv", {method: "POST", body: formData});
   const data = await res.json();
-  msg.textContent = `Uploaded: ${data.added} items added.`;
+  msg.textContent = t("msg_uploaded", data.added);
   if (data.skipped && data.skipped.length) {
-    msg.textContent += ` Skipped: ${data.skipped.join(", ")}`;
+    msg.textContent += " " + t("msg_skipped", data.skipped.join(", "));
   }
   fileInput.value = "";
   loadMenuManagement();
@@ -151,15 +151,14 @@ async function browseMenu() {
 
   const items = await fetchJSON(`/api/menu?restaurant_id=${rid}`);
   if (!items.length) {
-    area.innerHTML = '<p class="hint">No menu items entered for this restaurant yet. Add items above or upload a CSV.</p>';
+    area.innerHTML = `<p class="hint">${t("msg_no_menu")}</p>`;
     return;
   }
 
-  // Group by category
   const cats = {};
   items.forEach(m => { (cats[m.category] = cats[m.category] || []).push(m); });
 
-  let html = '<div class="table-scroll"><table><thead><tr><th>Category</th><th>Dish</th><th>Price (UZS)</th><th>Collected</th><th>By</th><th>Actions</th></tr></thead><tbody>';
+  let html = `<div class="table-scroll"><table><thead><tr><th>${t("lbl_category")}</th><th>${t("th_dish")}</th><th>${t("lbl_price")}</th><th>${t("th_collected")}</th><th>${t("th_by")}</th><th>${t("th_actions")}</th></tr></thead><tbody>`;
   for (const [cat, list] of Object.entries(cats)) {
     list.forEach(m => {
       html += `<tr data-id="${m.id}">
@@ -169,8 +168,8 @@ async function browseMenu() {
         <td>${m.collected_date || "—"}</td>
         <td>${m.collected_by || "—"}</td>
         <td>
-          <button class="btn-sm btn-save" onclick="savePrice(${m.id}, this)">Save</button>
-          <button class="btn-sm btn-del" onclick="deleteItem(${m.id})">Del</button>
+          <button class="btn-sm btn-save" onclick="savePrice(${m.id}, this)">${t("btn_save")}</button>
+          <button class="btn-sm btn-del" onclick="deleteItem(${m.id})">${t("btn_del")}</button>
         </td>
       </tr>`;
     });
@@ -184,8 +183,8 @@ async function savePrice(id, btn) {
   const newPrice = +input.value;
   const by = document.getElementById("mfBy").value || "";
   await putJSON(`/api/menu/${id}`, {price: newPrice, collected_by: by, collected_date: new Date().toISOString().split("T")[0]});
-  btn.textContent = "Saved!";
-  setTimeout(() => { btn.textContent = "Save"; }, 1500);
+  btn.textContent = t("btn_saved");
+  setTimeout(() => { btn.textContent = t("btn_save"); }, 1500);
   loadMenuManagement();
 }
 
@@ -203,9 +202,9 @@ async function ocrUpload() {
   const status = document.getElementById("ocrStatus");
   const resultsDiv = document.getElementById("ocrResults");
 
-  if (!fileInput.files.length) { status.textContent = "Select a photo or PDF first"; return; }
+  if (!fileInput.files.length) { status.textContent = t("msg_select_photo"); return; }
 
-  status.textContent = "Scanning menu... this may take a moment.";
+  status.textContent = t("msg_scanning");
   status.style.color = "var(--gold)";
   resultsDiv.style.display = "none";
 
@@ -222,13 +221,11 @@ async function ocrUpload() {
       return;
     }
 
-    status.textContent = `Found ${data.parsed_items.length} items. Review below and save.`;
+    status.textContent = t("msg_found_items", data.parsed_items.length);
     status.style.color = "var(--green)";
 
-    // Show raw text
     document.getElementById("ocrRawText").textContent = data.raw_text;
 
-    // Populate table
     const tbody = document.querySelector("#ocrTable tbody");
     tbody.innerHTML = "";
     data.parsed_items.forEach((item, i) => {
@@ -243,7 +240,7 @@ async function ocrUpload() {
     resultsDiv.style.display = "block";
     document.getElementById("ocrSaveMsg").textContent = "";
   } catch (e) {
-    status.textContent = "Upload failed: " + e.message;
+    status.textContent = t("msg_upload_fail", e.message);
     status.style.color = "var(--red)";
   }
 }
@@ -256,7 +253,6 @@ async function ocrSaveItems() {
   const rows = document.querySelectorAll("#ocrTable tbody tr");
   const items = [];
   rows.forEach(row => {
-    const idx = row.querySelector(".ocr-check").dataset.idx;
     if (!row.querySelector(".ocr-check").checked) return;
     items.push({
       category: row.querySelector(".ocr-cat").value,
@@ -265,7 +261,7 @@ async function ocrSaveItems() {
     });
   });
 
-  if (!items.length) { msg.textContent = "No items selected"; return; }
+  if (!items.length) { msg.textContent = t("msg_no_selected"); return; }
 
   const data = await postJSON("/api/menu/ocr/save", {
     restaurant_id: +rid,
@@ -273,7 +269,7 @@ async function ocrSaveItems() {
     collected_by: by,
   });
 
-  msg.textContent = `Saved ${data.added} items!`;
+  msg.textContent = t("msg_saved_items", data.added);
   msg.style.color = "var(--green)";
   document.getElementById("ocrFile").value = "";
   document.getElementById("ocrResults").style.display = "none";
@@ -293,7 +289,7 @@ function escHtml(s) {
 async function loadPriceCompareTab() {
   const categories = await fetchJSON("/api/menu/categories");
   const catSel = document.getElementById("pcCategory");
-  catSel.innerHTML = '<option value="">All</option>';
+  catSel.innerHTML = `<option value="">${t("opt_all")}</option>`;
   categories.forEach(c => { catSel.innerHTML += `<option value="${c}">${c}</option>`; });
   await loadPCDishes();
 }
@@ -303,7 +299,7 @@ async function loadPCDishes() {
   const url = cat ? `/api/menu/items?category=${encodeURIComponent(cat)}` : "/api/menu/items";
   const items = await fetchJSON(url);
   const sel = document.getElementById("pcDish");
-  sel.innerHTML = '<option value="">— Select a dish —</option>';
+  sel.innerHTML = `<option value="">${t("opt_select_dish")}</option>`;
   items.forEach(name => { sel.innerHTML += `<option value="${name}">${name}</option>`; });
 }
 
@@ -326,24 +322,21 @@ async function runPriceCompare() {
   }
   empty.style.display = "none";
 
-  // Summary
   document.getElementById("pcSummary").style.display = "grid";
   document.getElementById("pcCoverage").textContent = `${data.restaurants_with_data} / ${data.total_restaurants} (${data.coverage_pct}%)`;
   document.getElementById("pcAvg").textContent = fmt(data.avg_price) + " UZS";
   document.getElementById("pcMin").textContent = fmt(data.min_price) + " UZS";
   document.getElementById("pcMax").textContent = fmt(data.max_price) + " UZS";
 
-  // Segment cards
   const segDiv = document.getElementById("pcSegments");
   segDiv.innerHTML = "";
   segDiv.style.display = "grid";
   for (const [seg, avg] of Object.entries(data.segment_averages)) {
-    segDiv.innerHTML += `<div class="card"><span class="card-label">${seg} Avg</span><span class="card-value">${fmt(avg)} UZS</span></div>`;
+    segDiv.innerHTML += `<div class="card"><span class="card-label">${seg} ${t("avg_suffix")}</span><span class="card-value">${fmt(avg)} UZS</span></div>`;
   }
 
-  // Chart
   document.getElementById("pcChartSection").style.display = "grid";
-  document.getElementById("pcChartTitle").textContent = `${dish} — Price by Restaurant`;
+  document.getElementById("pcChartTitle").textContent = t("pc_chart_title", dish);
   const labels = data.results.map(r => r.restaurant_name);
   const prices = data.results.map(r => r.price);
   const colors = data.results.map(r => {
@@ -351,9 +344,8 @@ async function runPriceCompare() {
     if (r.restaurant_segment === "Premium") return "#6c63ff";
     return "#34d399";
   });
-  renderChart("priceCompareChart", "bar", labels, [{label:"Price (UZS)", data:prices, backgroundColor:colors, borderWidth:0}], {y:{beginAtZero:true}});
+  renderChart("priceCompareChart", "bar", labels, [{label:t("chart_price_label"), data:prices, backgroundColor:colors, borderWidth:0}], {y:{beginAtZero:true}});
 
-  // Table
   document.getElementById("pcTableSection").style.display = "block";
   const tbody = document.querySelector("#pcTable tbody");
   tbody.innerHTML = "";
@@ -391,26 +383,24 @@ async function loadMarketAnalytics() {
     const segsWithData = segments.filter(s => s.avg_menu_price > 0);
     renderChart("segmentChart", "bar",
       segsWithData.map(s => s.segment),
-      [{label:"Avg Menu Price",data:segsWithData.map(s => s.avg_menu_price),backgroundColor:["#34d399","#6c63ff","#f87171"]}],
+      [{label:t("chart_avg_label"),data:segsWithData.map(s => s.avg_menu_price),backgroundColor:["#34d399","#6c63ff","#f87171"]}],
       {y:{beginAtZero:true}});
     renderChart("districtChart", "doughnut",
       districts.map(d => d.district),
       [{data:districts.map(d => d.restaurant_count),backgroundColor:COLORS}],{},false,true);
   }
 
-  // Ranking
   const rtbody = document.querySelector("#rankingTable tbody");
   rtbody.innerHTML = "";
   ranking.forEach((r, i) => {
     rtbody.innerHTML += `<tr>
       <td>${i+1}</td><td><strong>${r.name}</strong></td><td>${r.cuisine}</td>
       <td>${r.price_segment}</td><td>${r.district}</td>
-      <td>${r.menu_items > 0 ? r.menu_items : '<span class="muted">none</span>'}</td>
+      <td>${r.menu_items > 0 ? r.menu_items : `<span class="muted">${t("lbl_none")}</span>`}</td>
       <td>${r.avg_menu_price > 0 ? fmt(r.avg_menu_price) : '<span class="muted">—</span>'}</td>
     </tr>`;
   });
 
-  // Tables
   fillTable("#segmentTable tbody", segments, ["segment","restaurant_count","avg_menu_price","menu_items_entered"]);
   fillTable("#districtTable tbody", districts, ["district","restaurant_count","avg_menu_price","menu_items_entered"]);
 }
@@ -443,7 +433,7 @@ function renderRestaurantTable() {
       <td><strong>${r.name}</strong></td><td>${r.cuisine}</td><td>${r.district}</td>
       <td>${r.price_segment}</td><td>${fmt(r.avg_bill_min)} – ${fmt(r.avg_bill_max)}</td>
       <td>${r.phone || "—"}</td><td>${r.address}</td>
-      <td><button class="btn-sm btn-del" onclick="deleteRestaurant(${r.id},'${escHtml(r.name)}')">Remove</button></td>
+      <td><button class="btn-sm btn-del" onclick="deleteRestaurant(${r.id},'${escHtml(r.name)}')">${t("btn_remove")}</button></td>
     </tr>`;
   });
 }
@@ -463,24 +453,22 @@ async function addRestaurant(e) {
   const r = await postJSON("/api/restaurants", data);
   restaurants.push(r);
 
-  // Update selects
   ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(id => {
     document.getElementById(id).innerHTML += `<option value="${r.id}">${r.name}</option>`;
   });
 
   const msg = document.getElementById("addRestMsg");
-  msg.textContent = `${r.name} added!`;
+  msg.textContent = t("msg_rest_added", r.name);
   setTimeout(() => msg.textContent = "", 3000);
   document.getElementById("addRestaurantForm").reset();
   renderRestaurantTable();
 }
 
 async function deleteRestaurant(id, name) {
-  if (!confirm(`Remove "${name}" and all its menu data? This cannot be undone.`)) return;
+  if (!confirm(t("msg_confirm_del", name))) return;
   await deleteJSON(`/api/restaurants/${id}`);
   restaurants = restaurants.filter(r => r.id !== id);
 
-  // Remove from selects
   ["mfRestaurant","browseRestaurant","ocrRestaurant"].forEach(sid => {
     const opt = document.querySelector(`#${sid} option[value="${id}"]`);
     if (opt) opt.remove();

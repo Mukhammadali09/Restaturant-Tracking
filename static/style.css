@@ -8,9 +8,14 @@
 body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:0 1rem;max-width:1400px;margin:0 auto}
 
 /* === Header === */
-header{text-align:center;padding:1.5rem 0 0}
+header{text-align:center;padding:1.5rem 0 0;position:relative}
 header h1{font-size:1.8rem;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .subtitle{color:var(--text-muted);font-size:.9rem;margin-top:.15rem}
+
+/* === Language Toggle === */
+.lang-toggle{position:absolute;top:1rem;right:0}
+.lang-btn{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .2s;min-width:40px}
+.lang-btn:hover{border-color:var(--accent);background:var(--accent);color:#fff}
 
 /* === Tabs === */
 .tabs{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin:1.2rem 0 .5rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}
@@ -79,14 +84,6 @@ tbody tr:hover{background:rgba(108,99,255,.06)}
 
 /* === Empty state === */
 .empty-state{background:var(--surface);border:1px dashed var(--border);border-radius:12px;padding:2rem;text-align:center;color:var(--text-muted);margin:1rem 0}
-
-/* === Review Cards === */
-.review-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:.9rem 1.1rem;margin-bottom:.6rem}
-.review-card .rc-header{display:flex;justify-content:space-between;margin-bottom:.25rem}
-.review-card .rc-name{font-weight:600}
-.review-card .rc-rating{color:var(--gold)}
-.review-card .rc-meta{font-size:.75rem;color:var(--text-muted);margin-bottom:.25rem}
-.review-card .rc-comment{font-size:.83rem}
 
 /* === Footer === */
 footer{text-align:center;padding:1.5rem 0;color:var(--text-muted);font-size:.75rem;border-top:1px solid var(--border)}

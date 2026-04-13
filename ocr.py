@@ -10,11 +10,13 @@ OCR_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
 OCR_API_URL = "https://api.ocr.space/parse/image"
 
 
-def ocr_extract_text(file_storage):
+def ocr_extract_text(file_storage, language="rus"):
     """Send a file to OCR.space and return extracted text.
 
     Args:
         file_storage: werkzeug FileStorage object from request.files
+        language: OCR language code ('rus' for Russian, 'eng' for English).
+                  Defaults to 'rus' since most Tashkent menus are in Russian.
 
     Returns:
         str: extracted text, or raises an exception on failure
@@ -25,7 +27,7 @@ def ocr_extract_text(file_storage):
     filename = file_storage.filename or "upload"
     payload = {
         "apikey": OCR_API_KEY,
-        "language": "eng",
+        "language": language,
         "isOverlayRequired": False,
         "detectOrientation": True,
         "scale": True,
@@ -78,7 +80,7 @@ def parse_menu_text(raw_text):
     )
 
     # Category-like headers: short lines with no digits, often ALL CAPS or ending with ':'
-    category_pattern = re.compile(r'^([A-ZА-ЯЁ\s]{3,40})\s*:?\s*$')
+    category_pattern = re.compile(r'^([A-ZА-ЯЁa-zа-яё\s]{3,40})\s*:?\s*$')
 
     for line in lines:
         line = line.strip()

@@ -241,8 +241,11 @@ def create_app():
         if not f.filename:
             return jsonify({"error": "Empty filename"}), 400
 
+        # Default to Russian since most Tashkent menus are in Russian
+        ocr_lang = request.form.get("language", "rus")
+
         try:
-            raw_text = ocr_extract_text(f)
+            raw_text = ocr_extract_text(f, language=ocr_lang)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
