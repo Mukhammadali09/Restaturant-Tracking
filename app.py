@@ -155,6 +155,13 @@ def create_app():
         db.session.commit()
         return jsonify({"deleted": mid})
 
+    @app.route("/api/menu/restaurant/<int:rid>", methods=["DELETE"])
+    def delete_all_menu_items(rid):
+        """Delete ALL menu items for a restaurant."""
+        count = MenuItem.query.filter_by(restaurant_id=rid).delete()
+        db.session.commit()
+        return jsonify({"deleted": count, "restaurant_id": rid})
+
     @app.route("/api/menu/bulk", methods=["POST"])
     def bulk_add_menu():
         """Add multiple menu items at once. Expects JSON array of items."""
@@ -255,7 +262,7 @@ def create_app():
         content_type = f.content_type or "application/octet-stream"
 
         try:
-            raw_text, items = parse_menu_image(
+            raw_text, items, method, claude_err = parse_menu_image(
                 file_bytes, filename, content_type, language=ocr_lang,
             )
         except ValueError as e:
@@ -284,6 +291,8 @@ def create_app():
             "raw_text": raw_text,
             "parsed_items": items,
             "saved": saved,
+            "method": method,
+            "claude_error": claude_err,
         })
 
     # ═══════════════════════════════════════════════════════════════════════════

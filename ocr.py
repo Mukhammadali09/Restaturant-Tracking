@@ -307,10 +307,11 @@ def parse_menu_text(raw_text):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def parse_menu_image(file_bytes, filename, content_type, language="eng"):
-    """Parse a menu image file and return (raw_text, items).
+    """Parse a menu image file and return (raw_text, items, method, error_info).
 
     Tries Claude Vision API first (best accuracy, handles multi-column menus).
     Falls back to OCR.space dual-engine approach if Anthropic key is not set.
+    Returns a 4-tuple: (raw_text, items, method_used, error_detail)
     """
     # Try Claude Vision first
     if _HAS_ANTHROPIC and ANTHROPIC_API_KEY:
@@ -320,16 +321,28 @@ def parse_menu_image(file_bytes, filename, content_type, language="eng"):
                 summary = "\n".join(
                     f"[{it['category']}] {it['name']} — {it['price']:,}" for it in items
                 )
-                return summary, items
+                return summary, items, "claude_vision", None
         except Exception as exc:
-            # Log but fall through to OCR.space
-            print(f"Claude Vision failed, falling back to OCR.space: {exc}")
+            claude_error = str(exc)
+            # Fall through to OCR.space, but report the error
+            print(f"Claude Vision failed: {claude_error}")
+
+            # If OCR.space is not available either, raise with details
+            if not OCR_API_KEY:
+                raise ValueError(f"Claude Vision failed: {claude_error}")
+    elif not _HAS_ANTHROPIC and ANTHROPIC_API_KEY:
+        claude_error = "anthropic package not installed on server"
+    elif _HAS_ANTHROPIC and not ANTHROPIC_API_KEY:
+        claude_error = "ANTHROPIC_API_KEY not set in environment"
+    else:
+        claude_error = "anthropic package not installed and ANTHROPIC_API_KEY not set"
 
     # Fallback to OCR.space
     if OCR_API_KEY:
-        return _ocr_dual_engine(file_bytes, filename, content_type, language)
+        raw, items = _ocr_dual_engine(file_bytes, filename, content_type, language)
+        return raw, items, "ocr_space", claude_error
 
     raise ValueError(
-        "No API key configured. Set ANTHROPIC_API_KEY (recommended) "
-        "or OCR_SPACE_API_KEY in your environment variables."
+        f"No working API. Claude Vision: {claude_error}. "
+        "OCR.space: OCR_SPACE_API_KEY not set."
     )

@@ -157,7 +157,11 @@ async function browseMenu() {
   const cats = {};
   items.forEach(m => { (cats[m.category] = cats[m.category] || []).push(m); });
 
-  let html = `<div class="table-scroll"><table><thead><tr><th>${t("lbl_category")}</th><th>${t("th_dish")}</th><th>${t("lbl_price")}</th><th>${t("th_collected")}</th><th>${t("th_by")}</th><th>${t("th_actions")}</th></tr></thead><tbody>`;
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+    <span class="hint">${items.length} ${t("th_items").toLowerCase()}</span>
+    <button class="btn-sm btn-del" onclick="clearRestaurantMenu(${rid})">${t("btn_clear_all")}</button>
+  </div>`;
+  html += `<div class="table-scroll"><table><thead><tr><th>${t("lbl_category")}</th><th>${t("th_dish")}</th><th>${t("lbl_price")}</th><th>${t("th_collected")}</th><th>${t("th_by")}</th><th>${t("th_actions")}</th></tr></thead><tbody>`;
   for (const [cat, list] of Object.entries(cats)) {
     list.forEach(m => {
       html += `<tr data-id="${m.id}">
@@ -212,6 +216,8 @@ async function ocrUpload() {
   let totalSaved = 0;
   let allRawText = "";
   let errors = [];
+  let lastMethod = "";
+  let lastClaudeError = "";
 
   for (let i = 0; i < files.length; i++) {
     if (files.length > 1) {
@@ -234,6 +240,8 @@ async function ocrUpload() {
 
       totalSaved += data.saved || 0;
       allRawText += (allRawText ? "\n\n--- " + files[i].name + " ---\n\n" : "") + (data.raw_text || "");
+      lastMethod = data.method || "unknown";
+      if (data.claude_error) lastClaudeError = data.claude_error;
     } catch (e) {
       errors.push(`${files[i].name}: ${e.message}`);
     }
@@ -245,18 +253,22 @@ async function ocrUpload() {
     return;
   }
 
-  // Show raw OCR text for debugging
+  // Show raw text for debugging
   if (allRawText) {
     document.getElementById("ocrRawText").textContent = allRawText;
     document.getElementById("ocrRawDetails").style.display = "block";
   }
 
-  // Build success message
+  // Build success message with method indicator
   const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
-  let msg = t("msg_ocr_saved", totalSaved, restName);
+  const methodLabel = lastMethod === "claude_vision" ? "AI Vision" : "OCR";
+  let msg = t("msg_ocr_saved", totalSaved, restName) + ` [${methodLabel}]`;
+  if (lastClaudeError && lastMethod !== "claude_vision") {
+    msg += ` | Claude Vision error: ${lastClaudeError}`;
+  }
   if (errors.length) msg += " | " + errors.join("; ");
   status.textContent = msg;
-  status.style.color = "var(--green)";
+  status.style.color = lastMethod === "claude_vision" ? "var(--green)" : "var(--gold)";
 
   // Clear file input
   fileInput.value = "";
@@ -270,6 +282,14 @@ async function ocrUpload() {
   document.getElementById("browseMenuArea").scrollIntoView({behavior: "smooth", block: "start"});
 
   // Refresh coverage stats
+  loadMenuManagement();
+}
+
+async function clearRestaurantMenu(rid) {
+  const restName = document.querySelector(`#browseRestaurant option[value="${rid}"]`)?.textContent || "";
+  if (!confirm(t("msg_confirm_clear", restName))) return;
+  await deleteJSON(`/api/menu/restaurant/${rid}`);
+  browseMenu();
   loadMenuManagement();
 }
 
