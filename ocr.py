@@ -56,6 +56,30 @@ def ocr_extract_text(file_storage, language="rus"):
     return "\n".join(p.get("ParsedText", "") for p in pages)
 
 
+def clean_ocr_name(name):
+    """Clean OCR artifacts from dish names.
+
+    Strips common misreadings of menu icons (N), (V), circled letters,
+    and other OCR garbage characters.  Runs two passes so that junk
+    exposed by earlier substitutions (e.g. '{' left after '(y)' removal)
+    is also caught.
+    """
+    for _ in range(2):
+        # Remove leading OCR junk: @, @@, {, }, (), (N), (V), (84), (y), etc.
+        name = re.sub(r'^[\s@{}\[\]#*]+', '', name)
+        # Remove leading parenthesized garbage: (N), (V), (84), (y), etc.
+        name = re.sub(r'^\([^)]{0,5}\)\s*', '', name)
+        # Remove circled/special unicode chars that OCR might produce
+        name = re.sub(r'^[®©™⓪①②③④⑤⑥⑦⑧⑨ⓝⓥⓃⓋ]+\s*', '', name)
+    # Remove trailing @, {, }, etc.
+    name = re.sub(r'[\s@{}\[\]#*]+$', '', name)
+    # Remove leading/trailing dashes, dots, underscores
+    name = re.sub(r'^[\s.\-–—_…\t]+|[\s.\-–—_…\t]+$', '', name)
+    # Collapse multiple spaces
+    name = re.sub(r'\s{2,}', ' ', name).strip()
+    return name
+
+
 def parse_menu_text(raw_text):
     """Parse OCR text to extract dish names and prices.
 
@@ -72,8 +96,8 @@ def parse_menu_text(raw_text):
     # Use space/comma/dot/apostrophe as thousand separator (NOT tab)
     SEP = r'[ ,.\']'
 
-    # Price pattern: 2-3 digits + separator + 3 digits, optionally repeated, or 4+ digits
-    PRICE = r'(\d{2,3}' + SEP + r'?\d{3}(?:' + SEP + r'?\d{3})?|\d{4,})'
+    # Price pattern: 1-3 digits + separator + 3 digits, optionally repeated, or 4+ digits
+    PRICE = r'(\d{1,3}' + SEP + r'?\d{3}(?:' + SEP + r'?\d{3})?|\d{4,})'
     SUFFIX = r'\s*(?:uzs|сум|сўм|so.m)?\s*'
 
     # Price at end of line (after tab or multi-space)
@@ -92,37 +116,49 @@ def parse_menu_text(raw_text):
         except ValueError:
             return None
 
-    def clean_name(s):
-        s = re.sub(r'[ .\-–—_…\t]+$', '', s).strip()
-        s = re.sub(r'^[\-–—•*]\s*', '', s).strip()
-        return s
+    def is_junk_line(line):
+        """Check if a line is likely junk (too short, only symbols, etc.)."""
+        stripped = re.sub(r'[\s@{}\[\]()#*.,\-–—_…]+', '', line)
+        return len(stripped) < 2
 
     def is_description(line):
+        """Check if a line is a description (ingredients list, not a dish name)."""
         if not line:
             return True
-        if line[0].islower():
-            return True
-        if line.count(',') >= 3 and not re.search(r'\d{3}', line):
+        # Very long lines with many commas are ingredient lists
+        if line.count(',') >= 4 and not re.search(r'\d{3}', line):
             return True
         return False
 
     def is_category_header(line):
-        """Only treat as category if it clearly looks like a section header.
-
-        Strict to avoid confusing all-caps dish names with categories.
-        """
+        """Only treat as category if it clearly looks like a section header."""
+        # Clean the line first
+        cleaned = re.sub(r'[^A-Za-zА-Яа-яЁё\s:/&\-]', '', line).strip()
+        if not cleaned or len(cleaned) < 3:
+            return False
         if re.search(r'\d', line):
             return False
-        if len(line) > 25:
+        if len(cleaned) > 25:
             return False
-        if not re.match(r'^[A-ZА-ЯЁa-zа-яё\s/&\-]+:?\s*$', line):
-            return False
-        # Lines ending with colon are almost certainly categories
+        # Lines ending with colon
         if line.rstrip().endswith(':'):
             return True
-        # Single-word all-caps (e.g. "SALADS", "ДЕСЕРТЫ")
-        stripped = line.strip()
-        if stripped == stripped.upper() and ' ' not in stripped and len(stripped) <= 20:
+        # Known category words (English and Russian)
+        lower = cleaned.lower()
+        category_words = [
+            'pasta', 'seafood', 'meat', 'desserts', 'dessert', 'salads', 'salad',
+            'soups', 'soup', 'appetizers', 'starters', 'mains', 'main courses',
+            'drinks', 'beverages', 'wine', 'sides', 'sauces', 'grill',
+            'meat dishes', 'fish', 'cold appetizers', 'hot appetizers',
+            'салаты', 'супы', 'горячее', 'десерты', 'закуски', 'напитки',
+            'паста', 'мясо', 'рыба', 'гриль', 'основные блюда',
+            'durum wheat pasta',
+        ]
+        if lower in category_words:
+            return True
+        # Two-word categories in ALL CAPS
+        words = cleaned.split()
+        if len(words) <= 2 and cleaned == cleaned.upper():
             return True
         return False
 
@@ -130,7 +166,11 @@ def parse_menu_text(raw_text):
 
     for line in lines:
         line = line.strip()
-        if not line or len(line) < 2:
+        if not line:
+            continue
+
+        # Skip junk lines
+        if is_junk_line(line):
             continue
 
         # 1. Check for standalone price (belongs to previous pending dish name)
@@ -142,51 +182,53 @@ def parse_menu_text(raw_text):
                 pending_name = None
                 continue
 
-        # 2. Check for tab-separated: "DISH NAME\t220 000"
+        # Try to extract price from the line using multiple strategies
+        price = None
+        name_part = None
+
+        # 2. Tab-separated: "DISH NAME\t220 000"
         m = price_after_tab.search(line)
         if m:
             price = clean_price(m.group(1))
             if price:
-                name = clean_name(line[:m.start()])
-                if name and len(name) > 1:
-                    items.append({"name": name, "price": price, "category": current_category})
-                    pending_name = None
-                    continue
+                name_part = line[:m.start()]
 
-        # 3. Check for multi-space separated: "DISH NAME       220 000"
-        m = price_after_spaces.search(line)
-        if m:
-            price = clean_price(m.group(1))
-            if price:
-                name = clean_name(line[:m.start()])
-                if name and len(name) > 1:
-                    items.append({"name": name, "price": price, "category": current_category})
-                    pending_name = None
-                    continue
+        # 3. Multi-space separated: "DISH NAME       220 000"
+        if not price:
+            m = price_after_spaces.search(line)
+            if m:
+                price = clean_price(m.group(1))
+                if price:
+                    name_part = line[:m.start()]
 
-        # 4. Check for price at end of line: "DISH NAME 220000"
-        m = price_end.search(line)
-        if m:
-            price = clean_price(m.group(1))
-            if price:
-                name = clean_name(line[:m.start()])
-                if name and len(name) > 1:
-                    items.append({"name": name, "price": price, "category": current_category})
-                    pending_name = None
-                    continue
+        # 4. Price at end of line: "DISH NAME 220000"
+        if not price:
+            m = price_end.search(line)
+            if m:
+                price = clean_price(m.group(1))
+                if price:
+                    name_part = line[:m.start()]
 
-        # 5. Skip description lines
+        if price and name_part is not None:
+            name = clean_ocr_name(name_part)
+            if name and len(name) > 1:
+                items.append({"name": name, "price": price, "category": current_category})
+                pending_name = None
+                continue
+
+        # 5. Skip description lines (ingredient lists)
         if is_description(line):
             continue
 
-        # 6. Check for category header (strict: short, no digits, looks like heading)
+        # 6. Check for category header
         if is_category_header(line):
-            current_category = line.rstrip(':').strip().title()
+            current_category = re.sub(r'[^A-Za-zА-Яа-яЁё\s/&\-]', '', line).strip().title()
             pending_name = None
             continue
 
-        # 7. Likely a dish name — store for pairing with price on next line
-        if line[0].isupper():
-            pending_name = clean_name(line)
+        # 7. Potential dish name — store for pairing with price on next line
+        cleaned_line = clean_ocr_name(line)
+        if cleaned_line and len(cleaned_line) > 2 and cleaned_line[0].isupper():
+            pending_name = cleaned_line
 
     return items
