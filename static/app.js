@@ -228,65 +228,50 @@ async function ocrUpload() {
   if (!files.length) { status.textContent = t("msg_select_photo"); status.style.color = "var(--red)"; return; }
   if (files.length > 10) { status.textContent = t("msg_max_files"); status.style.color = "var(--red)"; return; }
 
-  status.textContent = t("msg_scanning") + (files.length > 1 ? ` (1/${files.length})` : "");
+  status.textContent = t("msg_scanning");
   status.style.color = "var(--gold)";
 
-  let totalSaved = 0;
-  let allRawText = "";
-  let errors = [];
-  let lastMethod = "";
-  let lastClaudeError = "";
-
+  // Send ALL files in a single request — 1 API call instead of N
+  const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
-    if (files.length > 1) {
-      status.textContent = t("msg_scanning") + ` (${i + 1}/${files.length})`;
-    }
-    const formData = new FormData();
     formData.append("file", files[i]);
-    formData.append("language", lang);
-    formData.append("restaurant_id", rid);
-    formData.append("collected_by", by);
-
-    try {
-      const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
-      const data = await res.json();
-
-      if (data.error) {
-        errors.push(`${files[i].name}: ${data.error}`);
-        continue;
-      }
-
-      totalSaved += data.saved || 0;
-      allRawText += (allRawText ? "\n\n--- " + files[i].name + " ---\n\n" : "") + (data.raw_text || "");
-      lastMethod = data.method || "unknown";
-      if (data.claude_error) lastClaudeError = data.claude_error;
-    } catch (e) {
-      errors.push(`${files[i].name}: ${e.message}`);
-    }
   }
+  formData.append("language", lang);
+  formData.append("restaurant_id", rid);
+  formData.append("collected_by", by);
 
-  if (errors.length && totalSaved === 0) {
-    status.textContent = errors.join("; ");
+  try {
+    const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
+    const data = await res.json();
+
+    if (data.error) {
+      status.textContent = data.error;
+      status.style.color = "var(--red)";
+      return;
+    }
+
+    // Show raw text for debugging
+    if (data.raw_text) {
+      document.getElementById("ocrRawText").textContent = data.raw_text;
+      document.getElementById("ocrRawDetails").style.display = "block";
+    }
+
+    // Build success message with method indicator
+    const totalSaved = data.saved || 0;
+    const method = data.method || "unknown";
+    const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
+    const methodLabel = method === "claude_vision" ? "AI Vision" : "OCR";
+    let msg = t("msg_ocr_saved", totalSaved, restName) + ` [${methodLabel}]`;
+    if (data.claude_error && method !== "claude_vision") {
+      msg += ` | Claude Vision error: ${data.claude_error}`;
+    }
+    status.textContent = msg;
+    status.style.color = method === "claude_vision" ? "var(--green)" : "var(--gold)";
+  } catch (e) {
+    status.textContent = t("msg_upload_fail", e.message);
     status.style.color = "var(--red)";
     return;
   }
-
-  // Show raw text for debugging
-  if (allRawText) {
-    document.getElementById("ocrRawText").textContent = allRawText;
-    document.getElementById("ocrRawDetails").style.display = "block";
-  }
-
-  // Build success message with method indicator
-  const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
-  const methodLabel = lastMethod === "claude_vision" ? "AI Vision" : "OCR";
-  let msg = t("msg_ocr_saved", totalSaved, restName) + ` [${methodLabel}]`;
-  if (lastClaudeError && lastMethod !== "claude_vision") {
-    msg += ` | Claude Vision error: ${lastClaudeError}`;
-  }
-  if (errors.length) msg += " | " + errors.join("; ");
-  status.textContent = msg;
-  status.style.color = lastMethod === "claude_vision" ? "var(--green)" : "var(--gold)";
 
   // Clear file input
   fileInput.value = "";

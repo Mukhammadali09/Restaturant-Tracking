@@ -41,53 +41,53 @@ Rules:
 #  PRIMARY: Claude Vision API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _parse_with_claude(file_bytes, content_type, filename="upload"):
-    """Send menu image to Claude Vision and get structured items back."""
+def _parse_with_claude(files_list):
+    """Send one or more menu images/PDFs to Claude Vision in a SINGLE API call.
+
+    files_list: list of (file_bytes, content_type, filename) tuples.
+    All files are sent as separate image/document blocks in one message,
+    so 10 menu pages = 1 API call instead of 10.
+    """
     if not _HAS_ANTHROPIC or not ANTHROPIC_API_KEY:
         raise ValueError("Anthropic SDK not available or ANTHROPIC_API_KEY not set")
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    # Determine media type for the API
-    is_pdf = filename.lower().endswith(".pdf")
-    if is_pdf:
-        media_type = "application/pdf"
-    else:
-        media_type = content_type or "image/jpeg"
-        if media_type == "application/octet-stream":
-            media_type = "image/jpeg"
+    # Build content blocks — one per file
+    content_blocks = []
+    for file_bytes, content_type, filename in files_list:
+        b64_data = base64.b64encode(file_bytes).decode("utf-8")
+        is_pdf = filename.lower().endswith(".pdf")
 
-    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+        if is_pdf:
+            content_blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": b64_data,
+                },
+            })
+        else:
+            media_type = content_type or "image/jpeg"
+            if media_type == "application/octet-stream":
+                media_type = "image/jpeg"
+            content_blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": b64_data,
+                },
+            })
 
-    # Build the image/document content block
-    if is_pdf:
-        source_block = {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": b64_data,
-            },
-        }
-    else:
-        source_block = {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": media_type,
-                "data": b64_data,
-            },
-        }
+    # Add the extraction prompt after all images
+    content_blocks.append({"type": "text", "text": MENU_EXTRACTION_PROMPT})
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        messages=[
-            {
-                "role": "user",
-                "content": [source_block, {"type": "text", "text": MENU_EXTRACTION_PROMPT}],
-            }
-        ],
+        max_tokens=8192,
+        messages=[{"role": "user", "content": content_blocks}],
     )
 
     raw = message.content[0].text.strip()
@@ -306,17 +306,17 @@ def parse_menu_text(raw_text):
 #  MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def parse_menu_image(file_bytes, filename, content_type, language="eng"):
-    """Parse a menu image file and return (raw_text, items, method, error_info).
+def parse_menu_image(files_list, language="eng"):
+    """Parse one or more menu image/PDF files.
 
-    Tries Claude Vision API first (best accuracy, handles multi-column menus).
-    Falls back to OCR.space dual-engine approach if Anthropic key is not set.
+    files_list: list of (file_bytes, content_type, filename) tuples.
+    With Claude Vision, ALL files are sent in ONE API call (saves credits).
     Returns a 4-tuple: (raw_text, items, method_used, error_detail)
     """
-    # Try Claude Vision first
+    # Try Claude Vision first — sends ALL files in a single API call
     if _HAS_ANTHROPIC and ANTHROPIC_API_KEY:
         try:
-            items = _parse_with_claude(file_bytes, content_type, filename)
+            items = _parse_with_claude(files_list)
             if items:
                 summary = "\n".join(
                     f"[{it['category']}] {it['name']} — {it['price']:,}" for it in items
@@ -324,10 +324,7 @@ def parse_menu_image(file_bytes, filename, content_type, language="eng"):
                 return summary, items, "claude_vision", None
         except Exception as exc:
             claude_error = str(exc)
-            # Fall through to OCR.space, but report the error
             print(f"Claude Vision failed: {claude_error}")
-
-            # If OCR.space is not available either, raise with details
             if not OCR_API_KEY:
                 raise ValueError(f"Claude Vision failed: {claude_error}")
     elif not _HAS_ANTHROPIC and ANTHROPIC_API_KEY:
@@ -337,10 +334,15 @@ def parse_menu_image(file_bytes, filename, content_type, language="eng"):
     else:
         claude_error = "anthropic package not installed and ANTHROPIC_API_KEY not set"
 
-    # Fallback to OCR.space
+    # Fallback to OCR.space — must process each file separately
     if OCR_API_KEY:
-        raw, items = _ocr_dual_engine(file_bytes, filename, content_type, language)
-        return raw, items, "ocr_space", claude_error
+        all_items = []
+        all_raw = []
+        for file_bytes, content_type, filename in files_list:
+            raw, items = _ocr_dual_engine(file_bytes, filename, content_type, language)
+            all_items.extend(items)
+            all_raw.append(raw)
+        return "\n\n".join(all_raw), all_items, "ocr_space", claude_error
 
     raise ValueError(
         f"No working API. Claude Vision: {claude_error}. "

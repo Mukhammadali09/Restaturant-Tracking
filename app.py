@@ -240,30 +240,36 @@ def create_app():
 
     @app.route("/api/menu/ocr", methods=["POST"])
     def ocr_menu_upload():
-        """Upload a photo or PDF of a menu.
+        """Upload one or more menu photos/PDFs.
 
-        Uses Claude Vision API for accurate multi-column menu reading.
+        All files are sent in a SINGLE Claude Vision API call (saves credits).
         Falls back to OCR.space if Anthropic key is not configured.
         Auto-saves items to the restaurant when restaurant_id is provided.
         """
-        if "file" not in request.files:
+        uploaded = request.files.getlist("file")
+        if not uploaded or not uploaded[0].filename:
             return jsonify({"error": "No file uploaded"}), 400
-
-        f = request.files["file"]
-        if not f.filename:
-            return jsonify({"error": "Empty filename"}), 400
 
         ocr_lang = request.form.get("language", "rus")
         restaurant_id = request.form.get("restaurant_id", type=int)
         collected_by = request.form.get("collected_by", "OCR Upload")
 
-        filename = f.filename or "upload"
-        file_bytes = f.read()
-        content_type = f.content_type or "application/octet-stream"
+        # Collect all files into a list for batch processing
+        files_list = []
+        for f in uploaded:
+            if f.filename:
+                files_list.append((
+                    f.read(),
+                    f.content_type or "application/octet-stream",
+                    f.filename,
+                ))
+
+        if not files_list:
+            return jsonify({"error": "No valid files"}), 400
 
         try:
             raw_text, items, method, claude_err = parse_menu_image(
-                file_bytes, filename, content_type, language=ocr_lang,
+                files_list, language=ocr_lang,
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
