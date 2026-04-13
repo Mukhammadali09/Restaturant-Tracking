@@ -1,14 +1,122 @@
-"""OCR.space API integration for extracting menu items from photos/PDFs."""
+"""Menu image parsing — Claude Vision API (primary) with OCR.space fallback."""
 
+import base64
+import json
 import os
 import re
 
 import requests
 
+try:
+    import anthropic
 
+    _HAS_ANTHROPIC = True
+except ImportError:
+    _HAS_ANTHROPIC = False
+
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OCR_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
 OCR_API_URL = "https://api.ocr.space/parse/image"
 
+MENU_EXTRACTION_PROMPT = """Extract ALL dishes with their prices from this restaurant menu image.
+
+Return ONLY a valid JSON array — no explanation, no markdown, just the array.
+Each element must have exactly these keys:
+- "name": the complete dish name as printed on the menu (omit markers like V, N, circled icons)
+- "price": the price as a plain integer in UZS (e.g. 280000 not "280 000")
+- "category": the section/category header this dish belongs to, in Title Case
+
+Rules:
+- Include EVERY dish on the page — do not skip any
+- Read each column independently; do NOT merge text across columns
+- Prices in Uzbekistan are typically 5–7 digits (e.g. 70000 … 1050000)
+- Convert spaced prices: "280 000" → 280000
+- Strip menu markers (V) vegetarian, (N) new, circled letters, etc.
+- For nested sub-sections (e.g. "Ceviche" under "Raw Bar"), use "Raw Bar" as category
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PRIMARY: Claude Vision API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _parse_with_claude(file_bytes, content_type, filename="upload"):
+    """Send menu image to Claude Vision and get structured items back."""
+    if not _HAS_ANTHROPIC or not ANTHROPIC_API_KEY:
+        raise ValueError("Anthropic SDK not available or ANTHROPIC_API_KEY not set")
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # Determine media type for the API
+    is_pdf = filename.lower().endswith(".pdf")
+    if is_pdf:
+        media_type = "application/pdf"
+    else:
+        media_type = content_type or "image/jpeg"
+        if media_type == "application/octet-stream":
+            media_type = "image/jpeg"
+
+    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+
+    # Build the image/document content block
+    if is_pdf:
+        source_block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": b64_data,
+            },
+        }
+    else:
+        source_block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": b64_data,
+            },
+        }
+
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=4096,
+        messages=[
+            {
+                "role": "user",
+                "content": [source_block, {"type": "text", "text": MENU_EXTRACTION_PROMPT}],
+            }
+        ],
+    )
+
+    raw = message.content[0].text.strip()
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        inner = parts[1] if len(parts) >= 3 else parts[-1]
+        if inner.startswith("json"):
+            inner = inner[4:]
+        raw = inner.strip()
+
+    items = json.loads(raw)
+
+    # Validate
+    result = []
+    for item in items:
+        name = str(item.get("name", "")).strip()
+        price = item.get("price", 0)
+        category = str(item.get("category", "Uncategorized")).strip()
+        if name and isinstance(price, (int, float)) and price > 0:
+            result.append({"name": name, "price": int(price), "category": category})
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  FALLBACK: OCR.space + text parser
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _ocr_api_call(file_bytes, filename, content_type, language="rus", engine=1):
     """Low-level OCR.space API call. Returns extracted text."""
@@ -23,11 +131,8 @@ def _ocr_api_call(file_bytes, filename, content_type, language="rus", engine=1):
         "scale": True,
         "OCREngine": engine,
     }
-
-    # Engine 1 supports table detection; Engine 2 does not
     if engine == 1:
         payload["isTable"] = True
-
     if filename.lower().endswith(".pdf"):
         payload["filetype"] = "PDF"
 
@@ -42,9 +147,7 @@ def _ocr_api_call(file_bytes, filename, content_type, language="rus", engine=1):
 
     if result.get("IsErroredOnProcessing"):
         error_msg = (
-            result.get("ErrorMessage")
-            or result.get("ErrorDetails")
-            or "OCR processing failed"
+            result.get("ErrorMessage") or result.get("ErrorDetails") or "OCR processing failed"
         )
         raise ValueError(f"OCR error: {error_msg}")
 
@@ -55,101 +158,56 @@ def _ocr_api_call(file_bytes, filename, content_type, language="rus", engine=1):
     return "\n".join(p.get("ParsedText", "") for p in pages)
 
 
-def ocr_extract_text(file_storage, language="rus"):
-    """Send a file to OCR.space and return extracted text.
-
-    Wrapper that reads bytes from a FileStorage object.
-    """
-    filename = file_storage.filename or "upload"
-    file_bytes = file_storage.read()
-    content_type = file_storage.content_type or "application/octet-stream"
-    return _ocr_api_call(file_bytes, filename, content_type, language, engine=1)
-
-
-def ocr_dual_engine(file_bytes, filename, content_type, language="rus"):
-    """Try both OCR engines and return whichever extracts more menu items.
-
-    Engine 1: good for table layouts (prices right-aligned)
-    Engine 2: better for decorative/photo menus with stylized fonts
-    """
+def _ocr_dual_engine(file_bytes, filename, content_type, language="rus"):
+    """Try both OCR engines and return whichever extracts more menu items."""
     raw1, items1 = "", []
     raw2, items2 = "", []
 
-    # Engine 1 with table detection
     try:
         raw1 = _ocr_api_call(file_bytes, filename, content_type, language, engine=1)
         items1 = parse_menu_text(raw1)
     except Exception:
         pass
 
-    # Engine 2 for decorative menus
     try:
         raw2 = _ocr_api_call(file_bytes, filename, content_type, language, engine=2)
         items2 = parse_menu_text(raw2)
     except Exception:
         pass
 
-    # Return whichever found more items
     if len(items2) > len(items1):
         return raw2, items2
     if items1:
         return raw1, items1
-    # Both empty — return Engine 1 text if available
     return raw1 or raw2, []
 
 
 def clean_ocr_name(name):
-    """Clean OCR artifacts from dish names.
-
-    Strips common misreadings of menu icons (N), (V), circled letters,
-    numbering like A), B), 1), and other OCR garbage characters.
-    Runs two passes so that junk exposed by earlier substitutions
-    (e.g. '{' left after '(y)' removal) is also caught.
-    """
+    """Clean OCR artifacts from dish names."""
     for _ in range(2):
-        # Remove leading OCR junk: @, @@, {, }, [], #, * etc.
         name = re.sub(r'^[\s@{}\[\]#*]+', '', name)
-        # Remove leading parenthesized garbage: (N), (V), (84), (y), etc.
         name = re.sub(r'^\([^)]{0,5}\)\s*', '', name)
-        # Remove leading single-char numbering: A), B), 1), 2), etc.
-        name = re.sub(r'^[A-Za-zА-Яа-яЁё0-9]\)\s*', '', name)
-        # Remove circled/special unicode chars that OCR might produce
-        name = re.sub(r'^[®©™⓪①②③④⑤⑥⑦⑧⑨ⓝⓥⓃⓋ]+\s*', '', name)
-    # Remove trailing @, {, }, etc.
+        name = re.sub(r'^[A-Za-z0-9]\)\s*', '', name)
+        name = re.sub(r'^[\u00ae\u00a9\u2122\u24ea\u2460-\u2468\u24dd\u24e5\u24c3\u24cb]+\s*', '', name)
     name = re.sub(r'[\s@{}\[\]#*]+$', '', name)
-    # Remove leading/trailing dashes, dots, underscores
-    name = re.sub(r'^[\s.\-–—_…\t]+|[\s.\-–—_…\t]+$', '', name)
-    # Collapse multiple spaces
+    name = re.sub(r'^[\s.\-\u2013\u2014_\u2026\t]+|[\s.\-\u2013\u2014_\u2026\t]+$', '', name)
     name = re.sub(r'\s{2,}', ' ', name).strip()
     return name
 
 
 def parse_menu_text(raw_text):
-    """Parse OCR text to extract dish names and prices.
-
-    Handles common menu formats:
-      - Tab-separated: "Caesar Salad\\t220 000"
-      - Multi-space: "Caesar Salad       220 000"
-      - Same line: "Caesar Salad 220000 UZS"
-      - Price on next line after dish name
-    """
+    """Parse OCR text to extract dish names and prices."""
     items = []
     lines = raw_text.split("\n")
     current_category = "Uncategorized"
 
-    # Use space/comma/dot/apostrophe as thousand separator (NOT tab)
     SEP = r'[ ,.\']'
-
-    # Price pattern: 1-3 digits + separator + 3 digits, optionally repeated, or 4+ digits
     PRICE = r'(\d{1,3}' + SEP + r'?\d{3}(?:' + SEP + r'?\d{3})?|\d{4,})'
-    SUFFIX = r'\s*(?:uzs|сум|сўм|so.m)?\s*'
+    SUFFIX = r'\s*(?:uzs|\u0441\u0443\u043c|\u0441\u045e\u043c|so.m)?\s*'
 
-    # Price at end of line (after tab or multi-space)
     price_after_tab = re.compile(r'\t+' + PRICE + SUFFIX + '$', re.IGNORECASE)
     price_after_spaces = re.compile(r' {3,}' + PRICE + SUFFIX + '$', re.IGNORECASE)
     price_end = re.compile(PRICE + SUFFIX + '$', re.IGNORECASE)
-
-    # Standalone price line
     standalone_price = re.compile(r'^\s*' + PRICE + SUFFIX + '$', re.IGNORECASE)
 
     def clean_price(s):
@@ -161,36 +219,28 @@ def parse_menu_text(raw_text):
             return None
 
     def is_junk_line(line):
-        """Check if a line is likely junk (too short, only symbols, etc.)."""
         stripped = re.sub(r'[\s@{}\[\]()#*.,\-\u2013\u2014_\u2026]+', '', line)
         return len(stripped) < 2
 
     def is_description(line):
-        """Check if a line is a description (ingredients list, not a dish name)."""
         if not line:
             return True
-        # Very long lines with many commas are ingredient lists
         if line.count(',') >= 4 and not re.search(r'\d{3}', line):
             return True
         return False
 
     def is_category_header(line):
-        """Only treat as category if it clearly looks like a section header."""
         cleaned = re.sub(r'[^A-Za-z\u0410-\u042f\u0430-\u044f\u0401\u0451\s:/&\-]', '', line).strip()
-        if not cleaned or len(cleaned) < 3:
-            return False
-        if re.search(r'\d', line):
-            return False
-        if len(cleaned) > 25:
+        if not cleaned or len(cleaned) < 3 or re.search(r'\d', line) or len(cleaned) > 25:
             return False
         if line.rstrip().endswith(':'):
             return True
-        lower = cleaned.lower()
         category_words = [
             'pasta', 'seafood', 'meat', 'desserts', 'dessert', 'salads', 'salad',
             'soups', 'soup', 'appetizers', 'starters', 'mains', 'main courses',
             'drinks', 'beverages', 'wine', 'sides', 'sauces', 'grill',
             'meat dishes', 'fish', 'cold appetizers', 'hot appetizers',
+            'raw bar', 'risotto',
             '\u0441\u0430\u043b\u0430\u0442\u044b', '\u0441\u0443\u043f\u044b',
             '\u0433\u043e\u0440\u044f\u0447\u0435\u0435', '\u0434\u0435\u0441\u0435\u0440\u0442\u044b',
             '\u0437\u0430\u043a\u0443\u0441\u043a\u0438', '\u043d\u0430\u043f\u0438\u0442\u043a\u0438',
@@ -199,7 +249,7 @@ def parse_menu_text(raw_text):
             '\u043e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0431\u043b\u044e\u0434\u0430',
             'durum wheat pasta',
         ]
-        if lower in category_words:
+        if cleaned.lower() in category_words:
             return True
         words = cleaned.split()
         if len(words) <= 2 and cleaned == cleaned.upper():
@@ -207,16 +257,11 @@ def parse_menu_text(raw_text):
         return False
 
     pending_name = None
-
     for line in lines:
         line = line.strip()
-        if not line:
+        if not line or is_junk_line(line):
             continue
 
-        if is_junk_line(line):
-            continue
-
-        # 1. Check for standalone price (belongs to previous pending dish name)
         sp = standalone_price.match(line)
         if sp and pending_name:
             price = clean_price(sp.group(1))
@@ -225,32 +270,14 @@ def parse_menu_text(raw_text):
                 pending_name = None
                 continue
 
-        # Try to extract price from the line using multiple strategies
-        price = None
-        name_part = None
-
-        # 2. Tab-separated: "DISH NAME\t220 000"
-        m = price_after_tab.search(line)
-        if m:
-            price = clean_price(m.group(1))
-            if price:
-                name_part = line[:m.start()]
-
-        # 3. Multi-space separated: "DISH NAME       220 000"
-        if not price:
-            m = price_after_spaces.search(line)
+        price, name_part = None, None
+        for pattern in (price_after_tab, price_after_spaces, price_end):
+            m = pattern.search(line)
             if m:
                 price = clean_price(m.group(1))
                 if price:
                     name_part = line[:m.start()]
-
-        # 4. Price at end of line: "DISH NAME 220000"
-        if not price:
-            m = price_end.search(line)
-            if m:
-                price = clean_price(m.group(1))
-                if price:
-                    name_part = line[:m.start()]
+                    break
 
         if price and name_part is not None:
             name = clean_ocr_name(name_part)
@@ -259,11 +286,8 @@ def parse_menu_text(raw_text):
                 pending_name = None
                 continue
 
-        # 5. Skip description lines (ingredient lists)
         if is_description(line):
             continue
-
-        # 6. Check for category header
         if is_category_header(line):
             current_category = re.sub(
                 r'[^A-Za-z\u0410-\u042f\u0430-\u044f\u0401\u0451\s/&\-]', '', line
@@ -271,9 +295,41 @@ def parse_menu_text(raw_text):
             pending_name = None
             continue
 
-        # 7. Potential dish name -- store for pairing with price on next line
         cleaned_line = clean_ocr_name(line)
         if cleaned_line and len(cleaned_line) > 2 and cleaned_line[0].isupper():
             pending_name = cleaned_line
 
     return items
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MAIN ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def parse_menu_image(file_bytes, filename, content_type, language="eng"):
+    """Parse a menu image file and return (raw_text, items).
+
+    Tries Claude Vision API first (best accuracy, handles multi-column menus).
+    Falls back to OCR.space dual-engine approach if Anthropic key is not set.
+    """
+    # Try Claude Vision first
+    if _HAS_ANTHROPIC and ANTHROPIC_API_KEY:
+        try:
+            items = _parse_with_claude(file_bytes, content_type, filename)
+            if items:
+                summary = "\n".join(
+                    f"[{it['category']}] {it['name']} — {it['price']:,}" for it in items
+                )
+                return summary, items
+        except Exception as exc:
+            # Log but fall through to OCR.space
+            print(f"Claude Vision failed, falling back to OCR.space: {exc}")
+
+    # Fallback to OCR.space
+    if OCR_API_KEY:
+        return _ocr_dual_engine(file_bytes, filename, content_type, language)
+
+    raise ValueError(
+        "No API key configured. Set ANTHROPIC_API_KEY (recommended) "
+        "or OCR_SPACE_API_KEY in your environment variables."
+    )

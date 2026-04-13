@@ -10,7 +10,7 @@ from sqlalchemy import func
 
 import config
 from models import MenuItem, PriceHistory, Restaurant, db
-from ocr import ocr_dual_engine, parse_menu_text
+from ocr import parse_menu_image
 from seed import seed_database
 
 
@@ -235,7 +235,8 @@ def create_app():
     def ocr_menu_upload():
         """Upload a photo or PDF of a menu.
 
-        Uses both OCR engines and picks whichever extracts more items.
+        Uses Claude Vision API for accurate multi-column menu reading.
+        Falls back to OCR.space if Anthropic key is not configured.
         Auto-saves items to the restaurant when restaurant_id is provided.
         """
         if "file" not in request.files:
@@ -249,19 +250,18 @@ def create_app():
         restaurant_id = request.form.get("restaurant_id", type=int)
         collected_by = request.form.get("collected_by", "OCR Upload")
 
-        # Read bytes once for dual-engine processing
         filename = f.filename or "upload"
         file_bytes = f.read()
         content_type = f.content_type or "application/octet-stream"
 
         try:
-            raw_text, items = ocr_dual_engine(
+            raw_text, items = parse_menu_image(
                 file_bytes, filename, content_type, language=ocr_lang,
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
-            return jsonify({"error": f"OCR request failed: {str(e)}"}), 500
+            return jsonify({"error": f"Menu parsing failed: {str(e)}"}), 500
 
         # Auto-save items to the restaurant
         saved = 0
