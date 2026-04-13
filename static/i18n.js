@@ -34,7 +34,8 @@ const TRANSLATIONS = {
     // OCR
     ocr_title: "Upload Menu Photo / PDF (OCR)",
     ocr_hint: "Upload a photo or PDF of a restaurant menu. The system will read it automatically and extract dishes and prices.",
-    lbl_menu_file: "Menu File (photo or PDF)",
+    lbl_menu_file: "Menu Files (photos or PDF)",
+    lbl_menu_lang: "Menu Language",
     btn_scan: "Scan Menu",
     ocr_parsed: "Parsed Items — review, edit, and save",
     th_include: "Include",
@@ -163,7 +164,8 @@ const TRANSLATIONS = {
     // OCR
     ocr_title: "Загрузить фото / PDF меню (OCR)",
     ocr_hint: "Загрузите фото или PDF меню ресторана. Система автоматически считает его и извлечёт блюда и цены.",
-    lbl_menu_file: "Файл меню (фото или PDF)",
+    lbl_menu_file: "Файлы меню (фото или PDF)",
+    lbl_menu_lang: "Язык меню",
     btn_scan: "Сканировать меню",
     ocr_parsed: "Найденные позиции — проверьте, отредактируйте и сохраните",
     th_include: "Включить",

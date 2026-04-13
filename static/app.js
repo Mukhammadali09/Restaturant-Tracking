@@ -219,6 +219,7 @@ async function ocrUpload() {
     }
     const formData = new FormData();
     formData.append("file", files[i]);
+    formData.append("language", document.getElementById("ocrLang").value);
 
     try {
       const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
@@ -255,8 +256,8 @@ async function ocrUpload() {
   allItems.forEach((item, i) => {
     tbody.innerHTML += `<tr>
       <td><input type="checkbox" class="ocr-check" data-idx="${i}" checked /></td>
-      <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:120px" /></td>
-      <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="width:220px" /></td>
+      <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:140px" /></td>
+      <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="min-width:300px" /></td>
       <td><input type="number" class="ocr-price" data-idx="${i}" value="${item.price}" min="0" style="width:110px" /></td>
     </tr>`;
   });
