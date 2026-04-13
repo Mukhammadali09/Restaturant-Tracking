@@ -217,24 +217,33 @@ async function deleteItem(id) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  OCR MENU UPLOAD — auto-saves to restaurant, shows in browse table
 // ═══════════════════════════════════════════════════════════════════════════════
-// Convert any image to JPEG in the browser (handles iPhone HEIC)
+// Convert and resize any image to JPEG in the browser (handles HEIC + large files)
 function toJpeg(file) {
   return new Promise((resolve) => {
-    if (file.type === "image/jpeg" || file.type === "image/png" || file.type === "application/pdf") {
+    // Pass PDFs through unchanged
+    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
       resolve(file);
       return;
     }
+    // ALL images go through canvas — converts HEIC and resizes large files
     const img = new window.Image();
     img.onload = () => {
+      const MAX = 2048;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX || h > MAX) {
+        const scale = MAX / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
       const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      c.getContext("2d").drawImage(img, 0, 0);
+      c.width = w;
+      c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
       c.toBlob((blob) => {
         const name = file.name.replace(/\.\w+$/, ".jpg");
         resolve(new File([blob], name, {type: "image/jpeg"}));
         URL.revokeObjectURL(img.src);
-      }, "image/jpeg", 0.92);
+      }, "image/jpeg", 0.85);
     };
     img.onerror = () => { resolve(file); };
     img.src = URL.createObjectURL(file);
