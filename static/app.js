@@ -1,42 +1,41 @@
 const API = "";
 const COLORS = ["#6c63ff","#fbbf24","#34d399","#f87171","#60a5fa","#a78bfa","#fb923c","#38bdf8","#e879f9","#4ade80","#f472b6","#facc15"];
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = n => Number(n).toLocaleString("uz-UZ");
 const fetchJSON = url => fetch(API + url).then(r => r.json());
 const postJSON = (url, body) => fetch(API + url, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r => r.json());
+const putJSON = (url, body) => fetch(API + url, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r => r.json());
+const deleteJSON = url => fetch(API + url, {method:"DELETE"}).then(r => r.json());
 
-// ── State ────────────────────────────────────────────────────────────────────
 let restaurants = [];
 let charts = {};
 
-// ── Bootstrap ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BOOTSTRAP
+// ═══════════════════════════════════════════════════════════════════════════════
 document.addEventListener("DOMContentLoaded", async () => {
   restaurants = await fetchJSON("/api/restaurants");
   setupTabs();
   populateAllSelects();
-  loadPriceCompareDropdowns();
+
+  // Default tab: Menu Management
+  loadMenuManagement();
 
   // Event listeners
-  document.getElementById("dashRestaurant").addEventListener("change", loadDashboard);
-  document.getElementById("recomputeBtn").addEventListener("click", async () => {
-    await postJSON("/api/stats/recompute", {days: 30});
-    loadDashboard();
-  });
-  document.getElementById("pcCategory").addEventListener("change", loadPriceCompareDishes);
+  document.getElementById("menuForm").addEventListener("submit", submitMenuItem);
+  document.getElementById("csvUploadBtn").addEventListener("click", uploadCSV);
+  document.getElementById("browseRestaurant").addEventListener("change", browseMenu);
+  document.getElementById("pcCategory").addEventListener("change", loadPCDishes);
   document.getElementById("pcSearchBtn").addEventListener("click", runPriceCompare);
   document.getElementById("pcDish").addEventListener("change", runPriceCompare);
   document.getElementById("reviewForm").addEventListener("submit", submitReview);
-  document.getElementById("menuForm").addEventListener("submit", submitMenuItem);
   document.getElementById("revFilterRestaurant").addEventListener("change", loadReviews);
-  document.getElementById("revDate").valueAsDate = new Date();
   document.getElementById("restSegmentFilter").addEventListener("change", renderRestaurantTable);
   document.getElementById("restDistrictFilter").addEventListener("change", renderRestaurantTable);
+
+  document.getElementById("mfDate").valueAsDate = new Date();
+  document.getElementById("revDate").valueAsDate = new Date();
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  TABS
-// ═══════════════════════════════════════════════════════════════════════════════
 function setupTabs() {
   document.querySelectorAll(".tab").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -44,9 +43,8 @@ function setupTabs() {
       document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-
-      // Lazy-load tab data
-      if (btn.dataset.tab === "dashboard") loadDashboard();
+      if (btn.dataset.tab === "menu-mgmt") loadMenuManagement();
+      if (btn.dataset.tab === "price-compare") loadPriceCompareTab();
       if (btn.dataset.tab === "market") loadMarketAnalytics();
       if (btn.dataset.tab === "restaurants") renderRestaurantTable();
       if (btn.dataset.tab === "reviews") loadReviews();
@@ -55,75 +53,159 @@ function setupTabs() {
 }
 
 function populateAllSelects() {
-  const selectors = ["dashRestaurant", "revRestaurant", "mfRestaurant", "revFilterRestaurant"];
-  selectors.forEach(id => {
+  ["mfRestaurant","browseRestaurant","revRestaurant","revFilterRestaurant"].forEach(id => {
     const el = document.getElementById(id);
-    restaurants.forEach(r => {
-      el.innerHTML += `<option value="${r.id}">${r.name}</option>`;
-    });
+    restaurants.forEach(r => { el.innerHTML += `<option value="${r.id}">${r.name}</option>`; });
   });
-  // District filter
   const districts = [...new Set(restaurants.map(r => r.district))].sort();
   const df = document.getElementById("restDistrictFilter");
   districts.forEach(d => { df.innerHTML += `<option value="${d}">${d}</option>`; });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 1: DASHBOARD
+//  TAB 1: MENU MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════════
-async function loadDashboard() {
-  const rid = document.getElementById("dashRestaurant").value;
-  const [summary, stats, ranking] = await Promise.all([
-    fetchJSON("/api/stats/summary?days=30"),
-    fetchJSON(rid ? `/api/stats/daily?days=30&restaurant_id=${rid}` : "/api/stats/daily?days=30"),
-    fetchJSON("/api/analytics/ranking?days=30"),
+async function loadMenuManagement() {
+  const [cov, cats, history] = await Promise.all([
+    fetchJSON("/api/menu/coverage"),
+    fetchJSON("/api/menu/categories"),
+    fetchJSON("/api/price-history?limit=20"),
   ]);
 
-  // Summary cards
-  document.getElementById("totalReviews").textContent = fmt(summary.total_reviews);
-  document.getElementById("avgBill").textContent = fmt(summary.avg_bill);
-  document.getElementById("avgRating").textContent = (summary.avg_rating || 0).toFixed(1);
-  document.getElementById("restaurantCount").textContent = summary.restaurants_tracked || 0;
+  // Coverage cards
+  document.getElementById("covTotal").textContent = cov.total_restaurants;
+  document.getElementById("covWith").textContent = cov.restaurants_with_menu;
+  document.getElementById("covWithout").textContent = cov.restaurants_without_menu;
+  document.getElementById("covItems").textContent = fmt(cov.total_menu_items);
 
-  // Charts
-  const byDate = {};
-  stats.forEach(s => {
-    if (!byDate[s.date]) byDate[s.date] = {bills:[], ratings:[], counts:[]};
-    byDate[s.date].bills.push(s.avg_bill * s.review_count);
-    byDate[s.date].ratings.push(s.avg_rating * s.review_count);
-    byDate[s.date].counts.push(s.review_count);
-  });
-  const dates = Object.keys(byDate).sort();
-  const avgBills = dates.map(d => { const t=byDate[d].bills.reduce((a,b)=>a+b,0); const c=byDate[d].counts.reduce((a,b)=>a+b,0); return c?Math.round(t/c):0; });
-  const avgRatings = dates.map(d => { const t=byDate[d].ratings.reduce((a,b)=>a+b,0); const c=byDate[d].counts.reduce((a,b)=>a+b,0); return c?+(t/c).toFixed(2):0; });
+  // Category datalist
+  const dl = document.getElementById("catList");
+  dl.innerHTML = "";
+  cats.forEach(c => { dl.innerHTML += `<option value="${c}">`; });
 
-  renderChart("billChart", "line", dates, [{label:"Avg Bill (UZS)",data:avgBills,borderColor:"#6c63ff",backgroundColor:"rgba(108,99,255,.1)",fill:true,tension:.3}], {});
-  renderChart("ratingChart", "bar", dates, [{label:"Avg Rating",data:avgRatings,backgroundColor:"rgba(251,191,36,.6)",borderColor:"#fbbf24",borderWidth:1}], {y:{min:0,max:5}});
-
-  // Ranking table
-  const tbody = document.querySelector("#rankingTable tbody");
+  // Price history
+  const tbody = document.querySelector("#historyTable tbody");
   tbody.innerHTML = "";
-  ranking.forEach((r, i) => {
-    tbody.innerHTML += `<tr>
-      <td>${i+1}</td><td><strong>${r.name}</strong></td><td>${r.cuisine}</td>
-      <td><span class="segment-badge seg-${r.price_segment.toLowerCase().replace(/\s/g,'')}">${r.price_segment}</span></td>
-      <td>${r.district}</td><td>${fmt(r.total_reviews)}</td>
-      <td>${fmt(r.avg_bill)}</td><td>${r.avg_rating.toFixed(1)}</td>
-    </tr>`;
+  if (history.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">No price changes yet</td></tr>';
+  } else {
+    history.forEach(h => {
+      const cls = h.new_price > h.old_price ? "diff-negative" : "diff-positive";
+      const sign = h.change_pct > 0 ? "+" : "";
+      tbody.innerHTML += `<tr>
+        <td>${new Date(h.changed_at).toLocaleDateString()}</td>
+        <td>${h.restaurant_name}</td><td>${h.dish_name}</td>
+        <td>${fmt(h.old_price)}</td><td>${fmt(h.new_price)}</td>
+        <td class="${cls}">${sign}${h.change_pct}%</td>
+        <td>${h.changed_by || "—"}</td>
+      </tr>`;
+    });
+  }
+}
+
+async function submitMenuItem(e) {
+  e.preventDefault();
+  await postJSON("/api/menu", {
+    restaurant_id: +document.getElementById("mfRestaurant").value,
+    category: document.getElementById("mfCategory").value,
+    name: document.getElementById("mfName").value,
+    price: +document.getElementById("mfPrice").value,
+    description: document.getElementById("mfDesc").value,
+    collected_by: document.getElementById("mfBy").value,
+    collected_date: document.getElementById("mfDate").value || null,
   });
+  const msg = document.getElementById("menuFormMsg");
+  msg.textContent = "Item added!";
+  setTimeout(() => msg.textContent = "", 3000);
+  document.getElementById("mfCategory").value = "";
+  document.getElementById("mfName").value = "";
+  document.getElementById("mfPrice").value = "";
+  document.getElementById("mfDesc").value = "";
+  loadMenuManagement();
+  // Refresh browse if same restaurant
+  const browseRid = document.getElementById("browseRestaurant").value;
+  if (browseRid) browseMenu();
+}
+
+async function uploadCSV() {
+  const fileInput = document.getElementById("csvFile");
+  const msg = document.getElementById("csvMsg");
+  if (!fileInput.files.length) { msg.textContent = "Select a CSV file first"; return; }
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  const res = await fetch(API + "/api/menu/csv", {method: "POST", body: formData});
+  const data = await res.json();
+  msg.textContent = `Uploaded: ${data.added} items added.`;
+  if (data.skipped && data.skipped.length) {
+    msg.textContent += ` Skipped: ${data.skipped.join(", ")}`;
+  }
+  fileInput.value = "";
+  loadMenuManagement();
+}
+
+async function browseMenu() {
+  const rid = document.getElementById("browseRestaurant").value;
+  const area = document.getElementById("browseMenuArea");
+  if (!rid) { area.innerHTML = ""; return; }
+
+  const items = await fetchJSON(`/api/menu?restaurant_id=${rid}`);
+  if (!items.length) {
+    area.innerHTML = '<p class="hint">No menu items entered for this restaurant yet. Add items above or upload a CSV.</p>';
+    return;
+  }
+
+  // Group by category
+  const cats = {};
+  items.forEach(m => { (cats[m.category] = cats[m.category] || []).push(m); });
+
+  let html = '<div class="table-scroll"><table><thead><tr><th>Category</th><th>Dish</th><th>Price (UZS)</th><th>Collected</th><th>By</th><th>Actions</th></tr></thead><tbody>';
+  for (const [cat, list] of Object.entries(cats)) {
+    list.forEach(m => {
+      html += `<tr data-id="${m.id}">
+        <td>${m.category}</td>
+        <td><strong>${m.name}</strong><br><small class="muted">${m.description || ""}</small></td>
+        <td><input type="number" class="inline-price" value="${m.price}" data-id="${m.id}" min="0" style="width:110px" /></td>
+        <td>${m.collected_date || "—"}</td>
+        <td>${m.collected_by || "—"}</td>
+        <td>
+          <button class="btn-sm btn-save" onclick="savePrice(${m.id}, this)">Save</button>
+          <button class="btn-sm btn-del" onclick="deleteItem(${m.id})">Del</button>
+        </td>
+      </tr>`;
+    });
+  }
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+async function savePrice(id, btn) {
+  const input = document.querySelector(`input.inline-price[data-id="${id}"]`);
+  const newPrice = +input.value;
+  const by = document.getElementById("mfBy").value || "";
+  await putJSON(`/api/menu/${id}`, {price: newPrice, collected_by: by, collected_date: new Date().toISOString().split("T")[0]});
+  btn.textContent = "Saved!";
+  setTimeout(() => { btn.textContent = "Save"; }, 1500);
+  loadMenuManagement();
+}
+
+async function deleteItem(id) {
+  await deleteJSON(`/api/menu/${id}`);
+  browseMenu();
+  loadMenuManagement();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  TAB 2: PRICE COMPARISON
 // ═══════════════════════════════════════════════════════════════════════════════
-async function loadPriceCompareDropdowns() {
+async function loadPriceCompareTab() {
   const categories = await fetchJSON("/api/menu/categories");
   const catSel = document.getElementById("pcCategory");
+  catSel.innerHTML = '<option value="">All</option>';
   categories.forEach(c => { catSel.innerHTML += `<option value="${c}">${c}</option>`; });
-  await loadPriceCompareDishes();
+  await loadPCDishes();
 }
 
-async function loadPriceCompareDishes() {
+async function loadPCDishes() {
   const cat = document.getElementById("pcCategory").value;
   const url = cat ? `/api/menu/items?category=${encodeURIComponent(cat)}` : "/api/menu/items";
   const items = await fetchJSON(url);
@@ -134,28 +216,31 @@ async function loadPriceCompareDishes() {
 
 async function runPriceCompare() {
   const dish = document.getElementById("pcDish").value;
-  const cat = document.getElementById("pcCategory").value;
   if (!dish) return;
-
+  const cat = document.getElementById("pcCategory").value;
   let url = `/api/menu/compare?dish=${encodeURIComponent(dish)}`;
   if (cat) url += `&category=${encodeURIComponent(cat)}`;
   const data = await fetchJSON(url);
 
+  const empty = document.getElementById("pcEmpty");
   if (!data.results || !data.results.length) {
     document.getElementById("pcSummary").style.display = "none";
+    document.getElementById("pcSegments").style.display = "none";
     document.getElementById("pcChartSection").style.display = "none";
     document.getElementById("pcTableSection").style.display = "none";
+    empty.style.display = "block";
     return;
   }
+  empty.style.display = "none";
 
-  // Summary cards
+  // Summary
   document.getElementById("pcSummary").style.display = "grid";
-  document.getElementById("pcCount").textContent = data.total_restaurants;
+  document.getElementById("pcCoverage").textContent = `${data.restaurants_with_data} / ${data.total_restaurants} (${data.coverage_pct}%)`;
   document.getElementById("pcAvg").textContent = fmt(data.avg_price) + " UZS";
   document.getElementById("pcMin").textContent = fmt(data.min_price) + " UZS";
   document.getElementById("pcMax").textContent = fmt(data.max_price) + " UZS";
 
-  // Segment averages
+  // Segment cards
   const segDiv = document.getElementById("pcSegments");
   segDiv.innerHTML = "";
   segDiv.style.display = "grid";
@@ -173,10 +258,7 @@ async function runPriceCompare() {
     if (r.restaurant_segment === "Premium") return "#6c63ff";
     return "#34d399";
   });
-
-  renderChart("priceCompareChart", "bar", labels, [{
-    label: "Price (UZS)", data: prices, backgroundColor: colors, borderWidth: 0,
-  }], {y:{beginAtZero:true}}, true);
+  renderChart("priceCompareChart", "bar", labels, [{label:"Price (UZS)", data:prices, backgroundColor:colors, borderWidth:0}], {y:{beginAtZero:true}});
 
   // Table
   document.getElementById("pcTableSection").style.display = "block";
@@ -184,7 +266,7 @@ async function runPriceCompare() {
   tbody.innerHTML = "";
   data.results.forEach(r => {
     const diff = r.price - data.avg_price;
-    const pct = data.avg_price ? ((diff / data.avg_price) * 100).toFixed(1) : 0;
+    const pct = data.avg_price ? ((diff / data.avg_price)*100).toFixed(1) : 0;
     const cls = diff > 0 ? "diff-negative" : "diff-positive";
     const sign = diff > 0 ? "+" : "";
     tbody.innerHTML += `<tr>
@@ -192,7 +274,8 @@ async function runPriceCompare() {
       <td>${r.restaurant_segment}</td>
       <td>${fmt(r.price)}</td>
       <td class="${cls}">${sign}${fmt(diff)} (${sign}${pct}%)</td>
-      <td>${r.description || "—"}</td>
+      <td>${r.collected_date || "—"}</td>
+      <td>${r.collected_by || "—"}</td>
     </tr>`;
   });
 }
@@ -201,38 +284,42 @@ async function runPriceCompare() {
 //  TAB 3: MARKET ANALYTICS
 // ═══════════════════════════════════════════════════════════════════════════════
 async function loadMarketAnalytics() {
-  const [segments, cuisines, districts] = await Promise.all([
+  const [segments, districts, ranking] = await Promise.all([
     fetchJSON("/api/analytics/segments"),
-    fetchJSON("/api/analytics/cuisines"),
     fetchJSON("/api/analytics/districts"),
+    fetchJSON("/api/analytics/ranking"),
   ]);
 
-  // Segment charts
-  renderChart("segmentBillChart", "bar",
-    segments.map(s=>s.segment),
-    [{label:"Avg Bill",data:segments.map(s=>s.avg_bill),backgroundColor:["#34d399","#6c63ff","#f87171"]}],
-    {y:{beginAtZero:true}});
-  renderChart("segmentRatingChart", "bar",
-    segments.map(s=>s.segment),
-    [{label:"Avg Rating",data:segments.map(s=>s.avg_rating),backgroundColor:["#34d399","#6c63ff","#f87171"]}],
-    {y:{min:0,max:5}});
+  const hasData = segments.some(s => s.menu_items_entered > 0);
+  document.getElementById("marketEmpty").style.display = hasData ? "none" : "block";
+  document.getElementById("marketCharts").style.display = hasData ? "grid" : "none";
 
-  // District chart
-  renderChart("districtChart", "doughnut",
-    districts.map(d=>d.district),
-    [{data:districts.map(d=>d.restaurant_count),backgroundColor:COLORS}], {}, false, true);
+  if (hasData) {
+    const segsWithData = segments.filter(s => s.avg_menu_price > 0);
+    renderChart("segmentChart", "bar",
+      segsWithData.map(s => s.segment),
+      [{label:"Avg Menu Price",data:segsWithData.map(s => s.avg_menu_price),backgroundColor:["#34d399","#6c63ff","#f87171"]}],
+      {y:{beginAtZero:true}});
+    renderChart("districtChart", "doughnut",
+      districts.map(d => d.district),
+      [{data:districts.map(d => d.restaurant_count),backgroundColor:COLORS}],{},false,true);
+  }
 
-  // Cuisine chart (top 12)
-  const topCuisines = cuisines.slice(0, 12);
-  renderChart("cuisineChart", "horizontalBar",
-    topCuisines.map(c=>c.cuisine),
-    [{label:"Avg Bill",data:topCuisines.map(c=>c.avg_bill),backgroundColor:COLORS.slice(0,12)}],
-    {x:{beginAtZero:true}});
+  // Ranking
+  const rtbody = document.querySelector("#rankingTable tbody");
+  rtbody.innerHTML = "";
+  ranking.forEach((r, i) => {
+    rtbody.innerHTML += `<tr>
+      <td>${i+1}</td><td><strong>${r.name}</strong></td><td>${r.cuisine}</td>
+      <td>${r.price_segment}</td><td>${r.district}</td>
+      <td>${r.menu_items > 0 ? r.menu_items : '<span class="muted">none</span>'}</td>
+      <td>${r.avg_menu_price > 0 ? fmt(r.avg_menu_price) : '<span class="muted">—</span>'}</td>
+    </tr>`;
+  });
 
   // Tables
-  fillTable("#segmentTable tbody", segments, ["segment","restaurant_count","avg_bill","avg_rating"]);
-  fillTable("#districtTable tbody", districts, ["district","restaurant_count","avg_bill","avg_rating"]);
-  fillTable("#cuisineTable tbody", cuisines, ["cuisine","restaurant_count","avg_bill","avg_rating"]);
+  fillTable("#segmentTable tbody", segments, ["segment","restaurant_count","avg_menu_price","menu_items_entered"]);
+  fillTable("#districtTable tbody", districts, ["district","restaurant_count","avg_menu_price","menu_items_entered"]);
 }
 
 function fillTable(sel, data, keys) {
@@ -241,8 +328,7 @@ function fillTable(sel, data, keys) {
   data.forEach(row => {
     tbody.innerHTML += "<tr>" + keys.map(k => {
       let v = row[k];
-      if (typeof v === "number" && k.includes("bill")) v = fmt(v);
-      if (typeof v === "number" && k.includes("rating")) v = v.toFixed(1);
+      if (typeof v === "number" && k.includes("price")) v = v > 0 ? fmt(v) : '<span class="muted">—</span>';
       return `<td>${v}</td>`;
     }).join("") + "</tr>";
   });
@@ -257,7 +343,6 @@ function renderRestaurantTable() {
   let filtered = restaurants;
   if (seg) filtered = filtered.filter(r => r.price_segment === seg);
   if (dist) filtered = filtered.filter(r => r.district === dist);
-
   const tbody = document.querySelector("#restTable tbody");
   tbody.innerHTML = "";
   filtered.forEach(r => {
@@ -278,13 +363,11 @@ async function loadReviews() {
   const reviews = await fetchJSON(url);
   const container = document.getElementById("reviewsList");
   container.innerHTML = "";
+  if (!reviews.length) { container.innerHTML = '<p class="hint">No reviews yet. Submit one above.</p>'; return; }
   reviews.forEach(r => {
     container.innerHTML += `
       <div class="review-card">
-        <div class="rc-header">
-          <span class="rc-name">${r.reviewer_name}</span>
-          <span class="rc-rating">${"★".repeat(r.rating)}${"☆".repeat(5-r.rating)}</span>
-        </div>
+        <div class="rc-header"><span class="rc-name">${r.reviewer_name}</span><span class="rc-rating">${"★".repeat(r.rating)}${"☆".repeat(5-r.rating)}</span></div>
         <div class="rc-meta">${r.restaurant_name} &middot; ${r.visit_date} &middot; ${fmt(r.bill_amount)} UZS</div>
         <div class="rc-comment">${r.comment}</div>
       </div>`;
@@ -301,25 +384,10 @@ async function submitReview(e) {
     visit_date: document.getElementById("revDate").value,
     comment: document.getElementById("revComment").value,
   });
-  document.getElementById("reviewFormMsg").textContent = "Review submitted! Stats updated.";
+  document.getElementById("reviewFormMsg").textContent = "Review submitted!";
   document.getElementById("reviewForm").reset();
   document.getElementById("revDate").valueAsDate = new Date();
   loadReviews();
-  loadDashboard();
-}
-
-async function submitMenuItem(e) {
-  e.preventDefault();
-  await postJSON("/api/menu", {
-    restaurant_id: +document.getElementById("mfRestaurant").value,
-    category: document.getElementById("mfCategory").value,
-    name: document.getElementById("mfName").value,
-    price: +document.getElementById("mfPrice").value,
-    description: document.getElementById("mfDesc").value,
-  });
-  document.getElementById("menuFormMsg").textContent = "Menu item added!";
-  document.getElementById("menuForm").reset();
-  loadPriceCompareDishes();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -327,26 +395,17 @@ async function submitMenuItem(e) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function renderChart(canvasId, type, labels, datasets, scaleOpts, horizontal, isPie) {
   if (charts[canvasId]) charts[canvasId].destroy();
-
-  let realType = type;
-  let indexAxis;
+  let realType = type, indexAxis;
   if (type === "horizontalBar") { realType = "bar"; indexAxis = "y"; }
-
   const opts = {
-    responsive: true,
-    indexAxis: indexAxis || "x",
-    scales: isPie ? {} : {},
+    responsive: true, indexAxis: indexAxis || "x",
     plugins: { legend: { labels: { color: "#e4e4e7", font:{size:11} } } },
   };
-
   if (!isPie) {
     opts.scales = {
       x: { ticks:{color:"#9ca3af",font:{size:10}}, grid:{color:"#2a2d3a"}, ...((scaleOpts||{}).x||{}) },
       y: { ticks:{color:"#9ca3af",font:{size:10}}, grid:{color:"#2a2d3a"}, ...((scaleOpts||{}).y||{}) },
     };
   }
-
-  charts[canvasId] = new Chart(document.getElementById(canvasId), {
-    type: realType, data: { labels, datasets }, options: opts,
-  });
+  charts[canvasId] = new Chart(document.getElementById(canvasId), { type:realType, data:{labels,datasets}, options:opts });
 }

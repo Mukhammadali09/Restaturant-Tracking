@@ -8,330 +8,189 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <!-- ═══ Navigation Tabs ═══ -->
   <header>
     <h1>Tashkent Restaurant Market Tracker</h1>
-    <p class="subtitle">Real-time competitive intelligence for restaurant holdings</p>
+    <p class="subtitle">Competitive intelligence for restaurant holdings &mdash; real data only</p>
     <nav class="tabs">
-      <button class="tab" data-tab="dashboard">Dashboard</button>
-      <button class="tab active" data-tab="price-compare">Price Comparison</button>
+      <button class="tab active" data-tab="menu-mgmt">Menu Management</button>
+      <button class="tab" data-tab="price-compare">Price Comparison</button>
       <button class="tab" data-tab="market">Market Analytics</button>
       <button class="tab" data-tab="restaurants">Restaurants</button>
       <button class="tab" data-tab="reviews">Reviews</button>
     </nav>
   </header>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!--  TAB 1: DASHBOARD                                                      -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <main id="tab-dashboard" class="tab-content">
-    <section class="card-row">
-      <div class="card">
-        <span class="card-label">Total Reviews (30 d)</span>
-        <span id="totalReviews" class="card-value">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Avg Bill (UZS)</span>
-        <span id="avgBill" class="card-value">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Avg Rating</span>
-        <span id="avgRating" class="card-value">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Restaurants Tracked</span>
-        <span id="restaurantCount" class="card-value">—</span>
-      </div>
+  <!-- ═══ TAB 1: MENU MANAGEMENT ═══ -->
+  <main id="tab-menu-mgmt" class="tab-content active">
+
+    <!-- Coverage banner -->
+    <section id="coverageBanner" class="card-row">
+      <div class="card"><span class="card-label">Restaurants Tracked</span><span id="covTotal" class="card-value">—</span></div>
+      <div class="card"><span class="card-label">With Menu Data</span><span id="covWith" class="card-value green">—</span></div>
+      <div class="card"><span class="card-label">Missing Menu Data</span><span id="covWithout" class="card-value red">—</span></div>
+      <div class="card"><span class="card-label">Total Items Entered</span><span id="covItems" class="card-value">—</span></div>
     </section>
 
-    <section class="controls">
-      <label for="dashRestaurant">Filter:</label>
-      <select id="dashRestaurant"><option value="">All Restaurants</option></select>
-      <button id="recomputeBtn">Recompute Stats</button>
+    <!-- Add single item -->
+    <section class="form-section">
+      <h2>Add Menu Item</h2>
+      <p class="hint">Enter prices from actual menus you've collected from restaurant visits.</p>
+      <form id="menuForm">
+        <div class="form-row-inline">
+          <div class="form-row"><label>Restaurant</label><select id="mfRestaurant" required></select></div>
+          <div class="form-row"><label>Category</label><input id="mfCategory" list="catList" required placeholder="e.g. Salads, Mains, Desserts" /><datalist id="catList"></datalist></div>
+          <div class="form-row"><label>Dish Name</label><input id="mfName" required placeholder="e.g. Caesar Salad" /></div>
+          <div class="form-row"><label>Price (UZS)</label><input id="mfPrice" type="number" min="0" required placeholder="e.g. 128000" /></div>
+        </div>
+        <div class="form-row-inline">
+          <div class="form-row"><label>Description (optional)</label><input id="mfDesc" placeholder="Romaine, parmesan, croutons..." /></div>
+          <div class="form-row"><label>Collected By</label><input id="mfBy" placeholder="Your name" /></div>
+          <div class="form-row"><label>Collection Date</label><input id="mfDate" type="date" /></div>
+          <div class="form-row" style="align-self:flex-end"><button type="submit">Add Item</button></div>
+        </div>
+      </form>
+      <span id="menuFormMsg" class="form-msg"></span>
     </section>
 
-    <section class="charts">
-      <div class="chart-box">
-        <h2>Average Bill Trend (30 days)</h2>
-        <canvas id="billChart"></canvas>
+    <!-- CSV Upload -->
+    <section class="form-section">
+      <h2>Bulk CSV Upload</h2>
+      <p class="hint">Upload a CSV file with columns: <code>restaurant_name, category, dish_name, price, description, collected_by</code></p>
+      <div class="form-row-inline">
+        <div class="form-row"><label>CSV File</label><input type="file" id="csvFile" accept=".csv" /></div>
+        <div class="form-row" style="align-self:flex-end"><button id="csvUploadBtn">Upload CSV</button></div>
       </div>
-      <div class="chart-box">
-        <h2>Average Rating Trend (30 days)</h2>
-        <canvas id="ratingChart"></canvas>
-      </div>
+      <span id="csvMsg" class="form-msg"></span>
+      <details class="hint" style="margin-top:.5rem">
+        <summary>CSV format example</summary>
+        <pre>restaurant_name,category,dish_name,price,description,collected_by
+Novikov Cafe,Salads,Caesar Salad,128000,Romaine parmesan croutons,Aziz
+Novikov Cafe,Desserts,Napoleon Cake,145000,Puff pastry custard cream,Aziz
+Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
+      </details>
     </section>
 
-    <!-- Ranking Table -->
+    <!-- Browse restaurant menu -->
+    <section class="form-section">
+      <h2>Browse / Edit Restaurant Menu</h2>
+      <div class="form-row-inline">
+        <div class="form-row"><label>Select Restaurant</label><select id="browseRestaurant"><option value="">— Choose —</option></select></div>
+      </div>
+      <div id="browseMenuArea"></div>
+    </section>
+
+    <!-- Price change log -->
     <section class="data-section">
-      <h2>Restaurant Ranking (by Rating)</h2>
+      <h2>Recent Price Changes</h2>
       <div class="table-scroll">
-        <table id="rankingTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Restaurant</th>
-              <th>Cuisine</th>
-              <th>Segment</th>
-              <th>District</th>
-              <th>Reviews</th>
-              <th>Avg Bill</th>
-              <th>Avg Rating</th>
-            </tr>
-          </thead>
+        <table id="historyTable">
+          <thead><tr><th>Date</th><th>Restaurant</th><th>Dish</th><th>Old Price</th><th>New Price</th><th>Change</th><th>By</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
     </section>
   </main>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!--  TAB 2: PRICE COMPARISON TOOL                                          -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <main id="tab-price-compare" class="tab-content active">
+  <!-- ═══ TAB 2: PRICE COMPARISON ═══ -->
+  <main id="tab-price-compare" class="tab-content">
     <section class="form-section">
-      <h2>Menu Position Price Comparison</h2>
-      <p class="hint">Select a dish to see how it's priced across all similar-calibre restaurants.</p>
+      <h2>Price Comparison</h2>
+      <p class="hint">Compare actual collected prices across restaurants. Only shows data your team has entered.</p>
       <div class="form-row-inline">
-        <div class="form-row">
-          <label for="pcCategory">Category</label>
-          <select id="pcCategory"><option value="">All Categories</option></select>
-        </div>
-        <div class="form-row">
-          <label for="pcDish">Dish Name</label>
-          <select id="pcDish"><option value="">— Select a dish —</option></select>
-        </div>
-        <div class="form-row" style="align-self:flex-end">
-          <button id="pcSearchBtn">Compare Prices</button>
-        </div>
+        <div class="form-row"><label>Category</label><select id="pcCategory"><option value="">All</option></select></div>
+        <div class="form-row"><label>Dish</label><select id="pcDish"><option value="">— Select —</option></select></div>
+        <div class="form-row" style="align-self:flex-end"><button id="pcSearchBtn">Compare</button></div>
       </div>
     </section>
-
-    <!-- Comparison summary cards -->
-    <section id="pcSummary" class="card-row" style="display:none;">
-      <div class="card">
-        <span class="card-label">Restaurants with this dish</span>
-        <span id="pcCount" class="card-value">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Market Average</span>
-        <span id="pcAvg" class="card-value">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Cheapest</span>
-        <span id="pcMin" class="card-value green">—</span>
-      </div>
-      <div class="card">
-        <span class="card-label">Most Expensive</span>
-        <span id="pcMax" class="card-value red">—</span>
-      </div>
+    <section id="pcSummary" class="card-row" style="display:none">
+      <div class="card"><span class="card-label">Data Coverage</span><span id="pcCoverage" class="card-value">—</span></div>
+      <div class="card"><span class="card-label">Market Average</span><span id="pcAvg" class="card-value">—</span></div>
+      <div class="card"><span class="card-label">Cheapest</span><span id="pcMin" class="card-value green">—</span></div>
+      <div class="card"><span class="card-label">Most Expensive</span><span id="pcMax" class="card-value red">—</span></div>
     </section>
-
-    <!-- Segment averages -->
-    <section id="pcSegments" class="card-row" style="display:none;"></section>
-
-    <!-- Price chart -->
-    <section class="charts" id="pcChartSection" style="display:none;">
-      <div class="chart-box full-width">
-        <h2 id="pcChartTitle">Price Comparison</h2>
-        <canvas id="priceCompareChart"></canvas>
-      </div>
-    </section>
-
-    <!-- Detailed table -->
-    <section class="data-section" id="pcTableSection" style="display:none;">
+    <section id="pcSegments" class="card-row" style="display:none"></section>
+    <section class="charts" id="pcChartSection" style="display:none"><div class="chart-box full-width"><h2 id="pcChartTitle">Price Comparison</h2><canvas id="priceCompareChart"></canvas></div></section>
+    <section class="data-section" id="pcTableSection" style="display:none">
       <h2>Detailed Breakdown</h2>
       <div class="table-scroll">
         <table id="pcTable">
-          <thead>
-            <tr>
-              <th>Restaurant</th>
-              <th>Segment</th>
-              <th>Price (UZS)</th>
-              <th>vs Market Avg</th>
-              <th>Description</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Restaurant</th><th>Segment</th><th>Price (UZS)</th><th>vs Market Avg</th><th>Collected</th><th>By</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
     </section>
-
-    <!-- Add menu item form -->
-    <section class="form-section">
-      <h2>Add Menu Position</h2>
-      <form id="menuForm">
-        <div class="form-row-inline">
-          <div class="form-row">
-            <label for="mfRestaurant">Restaurant</label>
-            <select id="mfRestaurant" required></select>
-          </div>
-          <div class="form-row">
-            <label for="mfCategory">Category</label>
-            <input id="mfCategory" type="text" required placeholder="e.g. Mains — Meat" />
-          </div>
-          <div class="form-row">
-            <label for="mfName">Dish Name</label>
-            <input id="mfName" type="text" required placeholder="e.g. Ribeye Steak" />
-          </div>
-          <div class="form-row">
-            <label for="mfPrice">Price (UZS)</label>
-            <input id="mfPrice" type="number" min="0" required placeholder="e.g. 280000" />
-          </div>
-        </div>
-        <div class="form-row">
-          <label for="mfDesc">Description</label>
-          <input id="mfDesc" type="text" placeholder="Short description (optional)" />
-        </div>
-        <button type="submit">Add to Menu</button>
-        <span id="menuFormMsg" class="form-msg"></span>
-      </form>
-    </section>
+    <div id="pcEmpty" class="empty-state" style="display:none">
+      <p>No price data yet for this dish. Go to <strong>Menu Management</strong> to enter prices.</p>
+    </div>
   </main>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!--  TAB 3: MARKET ANALYTICS                                               -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- ═══ TAB 3: MARKET ANALYTICS ═══ -->
   <main id="tab-market" class="tab-content">
-    <section class="charts">
-      <div class="chart-box">
-        <h2>Average Bill by Price Segment</h2>
-        <canvas id="segmentBillChart"></canvas>
-      </div>
-      <div class="chart-box">
-        <h2>Average Rating by Price Segment</h2>
-        <canvas id="segmentRatingChart"></canvas>
+    <div id="marketEmpty" class="empty-state" style="display:none"><p>Enter menu data in <strong>Menu Management</strong> first to see analytics.</p></div>
+    <section class="charts" id="marketCharts">
+      <div class="chart-box"><h2>Avg Menu Price by Segment</h2><canvas id="segmentChart"></canvas></div>
+      <div class="chart-box"><h2>Restaurants by District</h2><canvas id="districtChart"></canvas></div>
+    </section>
+    <section class="data-section">
+      <h2>Restaurant Data Completeness</h2>
+      <div class="table-scroll">
+        <table id="rankingTable">
+          <thead><tr><th>#</th><th>Restaurant</th><th>Cuisine</th><th>Segment</th><th>District</th><th>Items Entered</th><th>Avg Price</th></tr></thead>
+          <tbody></tbody>
+        </table>
       </div>
     </section>
-    <section class="charts">
-      <div class="chart-box">
-        <h2>Restaurants by District</h2>
-        <canvas id="districtChart"></canvas>
-      </div>
-      <div class="chart-box">
-        <h2>Avg Bill by Cuisine Type (Top 12)</h2>
-        <canvas id="cuisineChart"></canvas>
-      </div>
-    </section>
-
-    <!-- Segment breakdown table -->
     <section class="data-section">
       <h2>Segment Breakdown</h2>
       <div class="table-scroll">
-        <table id="segmentTable">
-          <thead><tr><th>Segment</th><th>Restaurants</th><th>Avg Bill (UZS)</th><th>Avg Rating</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <table id="segmentTable"><thead><tr><th>Segment</th><th>Restaurants</th><th>Avg Menu Price</th><th>Items Entered</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
-
     <section class="data-section">
       <h2>District Breakdown</h2>
       <div class="table-scroll">
-        <table id="districtTable">
-          <thead><tr><th>District</th><th>Restaurants</th><th>Avg Bill (UZS)</th><th>Avg Rating</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="data-section">
-      <h2>Cuisine Breakdown</h2>
-      <div class="table-scroll">
-        <table id="cuisineTable">
-          <thead><tr><th>Cuisine</th><th>Restaurants</th><th>Avg Bill (UZS)</th><th>Avg Rating</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <table id="districtTable"><thead><tr><th>District</th><th>Restaurants</th><th>Avg Menu Price</th><th>Items Entered</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
   </main>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!--  TAB 4: RESTAURANTS                                                     -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- ═══ TAB 4: RESTAURANTS ═══ -->
   <main id="tab-restaurants" class="tab-content">
     <section class="controls">
-      <label for="restSegmentFilter">Segment:</label>
-      <select id="restSegmentFilter">
-        <option value="">All</option>
-        <option>Luxury</option>
-        <option>Premium</option>
-        <option>Upper Casual</option>
-      </select>
-      <label for="restDistrictFilter">District:</label>
-      <select id="restDistrictFilter"><option value="">All</option></select>
+      <label>Segment:</label><select id="restSegmentFilter"><option value="">All</option><option>Luxury</option><option>Premium</option><option>Upper Casual</option></select>
+      <label>District:</label><select id="restDistrictFilter"><option value="">All</option></select>
     </section>
     <section class="data-section">
       <div class="table-scroll">
         <table id="restTable">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Cuisine</th>
-              <th>District</th>
-              <th>Segment</th>
-              <th>Bill Range (UZS)</th>
-              <th>Phone</th>
-              <th>Address</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Name</th><th>Cuisine</th><th>District</th><th>Segment</th><th>Bill Range (UZS)</th><th>Phone</th><th>Address</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
     </section>
   </main>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!--  TAB 5: REVIEWS                                                         -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- ═══ TAB 5: REVIEWS ═══ -->
   <main id="tab-reviews" class="tab-content">
     <section class="form-section">
       <h2>Submit a Review</h2>
       <form id="reviewForm">
         <div class="form-row-inline">
-          <div class="form-row">
-            <label for="revRestaurant">Restaurant</label>
-            <select id="revRestaurant" required></select>
-          </div>
-          <div class="form-row">
-            <label for="revName">Your Name</label>
-            <input id="revName" type="text" required placeholder="e.g. Aziz M." />
-          </div>
-          <div class="form-row">
-            <label for="revRating">Rating (1-5)</label>
-            <input id="revRating" type="number" min="1" max="5" required />
-          </div>
-          <div class="form-row">
-            <label for="revBill">Bill Amount (UZS)</label>
-            <input id="revBill" type="number" min="0" required placeholder="e.g. 350000" />
-          </div>
-          <div class="form-row">
-            <label for="revDate">Visit Date</label>
-            <input id="revDate" type="date" required />
-          </div>
+          <div class="form-row"><label>Restaurant</label><select id="revRestaurant" required></select></div>
+          <div class="form-row"><label>Your Name</label><input id="revName" type="text" required placeholder="e.g. Aziz M." /></div>
+          <div class="form-row"><label>Rating (1-5)</label><input id="revRating" type="number" min="1" max="5" required /></div>
+          <div class="form-row"><label>Bill Amount (UZS)</label><input id="revBill" type="number" min="0" required placeholder="350000" /></div>
+          <div class="form-row"><label>Visit Date</label><input id="revDate" type="date" required /></div>
         </div>
-        <div class="form-row">
-          <label for="revComment">Comment</label>
-          <textarea id="revComment" rows="3" placeholder="Share your experience..."></textarea>
-        </div>
-        <button type="submit">Submit Review</button>
-        <span id="reviewFormMsg" class="form-msg"></span>
+        <div class="form-row"><label>Comment</label><textarea id="revComment" rows="3" placeholder="Share your experience..."></textarea></div>
+        <button type="submit">Submit Review</button><span id="reviewFormMsg" class="form-msg"></span>
       </form>
     </section>
-
-    <section class="controls">
-      <label for="revFilterRestaurant">Filter:</label>
-      <select id="revFilterRestaurant"><option value="">All Restaurants</option></select>
-    </section>
-    <section class="data-section">
-      <h2>Recent Reviews</h2>
-      <div id="reviewsList"></div>
-    </section>
+    <section class="controls"><label>Filter:</label><select id="revFilterRestaurant"><option value="">All</option></select></section>
+    <section class="data-section"><h2>Recent Reviews</h2><div id="reviewsList"></div></section>
   </main>
 
-  <footer>
-    <p>Tashkent Restaurant Market Tracker &mdash; Analytics update daily at 00:05 &amp; on every new review</p>
-  </footer>
-
+  <footer><p>Tashkent Restaurant Market Tracker &mdash; All prices are manually collected from real menus</p></footer>
   <script src="app.js"></script>
 </body>
 </html>

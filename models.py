@@ -14,9 +14,9 @@ class Restaurant(db.Model):
     address = db.Column(db.String(300), nullable=False)
     district = db.Column(db.String(100), nullable=False)
     phone = db.Column(db.String(30))
-    price_segment = db.Column(db.String(30), default="Premium")  # Premium / Luxury / Upper Casual
-    avg_bill_min = db.Column(db.Integer, default=0)  # UZS — typical bill range low end
-    avg_bill_max = db.Column(db.Integer, default=0)  # UZS — typical bill range high end
+    price_segment = db.Column(db.String(30), default="Premium")
+    avg_bill_min = db.Column(db.Integer, default=0)
+    avg_bill_max = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     reviews = db.relationship("Review", backref="restaurant", lazy=True, cascade="all, delete-orphan")
@@ -44,8 +44,8 @@ class Review(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=False)
     reviewer_name = db.Column(db.String(100), nullable=False)
-    rating = db.Column(db.Integer, nullable=False)  # 1-5
-    bill_amount = db.Column(db.Float, nullable=False)  # in UZS
+    rating = db.Column(db.Integer, nullable=False)
+    bill_amount = db.Column(db.Float, nullable=False)
     comment = db.Column(db.Text)
     visit_date = db.Column(db.Date, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -65,17 +65,21 @@ class Review(db.Model):
 
 
 class MenuItem(db.Model):
-    """Menu position with price — used for cross-restaurant price comparison."""
+    """Menu position with price — ONLY from real manual data entry."""
     __tablename__ = "menu_items"
 
     id = db.Column(db.Integer, primary_key=True)
     restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=False)
-    category = db.Column(db.String(80), nullable=False)   # Salads, Mains, Desserts, Drinks, etc.
-    name = db.Column(db.String(200), nullable=False)       # "Caesar Salad", "Plov", etc.
-    name_normalized = db.Column(db.String(200), nullable=False)  # lowercased for matching
-    price = db.Column(db.Integer, nullable=False)          # UZS
+    category = db.Column(db.String(80), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    name_normalized = db.Column(db.String(200), nullable=False)
+    price = db.Column(db.Integer, nullable=False)
     description = db.Column(db.Text)
+    collected_by = db.Column(db.String(100), default="")
+    collected_date = db.Column(db.Date)
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    price_history = db.relationship("PriceHistory", backref="menu_item", lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -87,7 +91,34 @@ class MenuItem(db.Model):
             "name": self.name,
             "price": self.price,
             "description": self.description,
+            "collected_by": self.collected_by,
+            "collected_date": self.collected_date.isoformat() if self.collected_date else None,
             "updated_at": self.updated_at.isoformat(),
+        }
+
+
+class PriceHistory(db.Model):
+    """Logs every price change so we can track trends over time."""
+    __tablename__ = "price_history"
+
+    id = db.Column(db.Integer, primary_key=True)
+    menu_item_id = db.Column(db.Integer, db.ForeignKey("menu_items.id"), nullable=False)
+    old_price = db.Column(db.Integer, nullable=False)
+    new_price = db.Column(db.Integer, nullable=False)
+    changed_by = db.Column(db.String(100), default="")
+    changed_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "menu_item_id": self.menu_item_id,
+            "dish_name": self.menu_item.name if self.menu_item else None,
+            "restaurant_name": self.menu_item.restaurant.name if self.menu_item and self.menu_item.restaurant else None,
+            "old_price": self.old_price,
+            "new_price": self.new_price,
+            "change_pct": round((self.new_price - self.old_price) / self.old_price * 100, 1) if self.old_price else 0,
+            "changed_by": self.changed_by,
+            "changed_at": self.changed_at.isoformat(),
         }
 
 
