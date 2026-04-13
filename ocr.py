@@ -73,8 +73,11 @@ def _parse_with_claude(files_list):
                 },
             })
         else:
+            # Claude API only accepts: image/jpeg, image/png, image/gif, image/webp
+            SUPPORTED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
             media_type = content_type or "image/jpeg"
-            if media_type == "application/octet-stream":
+            if media_type not in SUPPORTED_TYPES:
+                # iPhone sends image/heic, image/heif, etc. — default to jpeg
                 media_type = "image/jpeg"
             content_blocks.append({
                 "type": "image",
