@@ -217,40 +217,6 @@ async function deleteItem(id) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  OCR MENU UPLOAD — auto-saves to restaurant, shows in browse table
 // ═══════════════════════════════════════════════════════════════════════════════
-// Convert and resize any image to JPEG in the browser (handles HEIC + large files)
-function toJpeg(file) {
-  return new Promise((resolve) => {
-    // Pass PDFs through unchanged
-    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-      resolve(file);
-      return;
-    }
-    // ALL images go through canvas — converts HEIC and resizes large files
-    const img = new window.Image();
-    img.onload = () => {
-      const MAX = 1600;
-      let w = img.naturalWidth, h = img.naturalHeight;
-      if (w > MAX || h > MAX) {
-        const scale = MAX / Math.max(w, h);
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-      }
-      const c = document.createElement("canvas");
-      c.width = w;
-      c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
-      c.toBlob((blob) => {
-        URL.revokeObjectURL(img.src);
-        if (!blob) { resolve(file); return; }
-        const name = file.name.replace(/\.\w+$/, ".jpg");
-        resolve(new File([blob], name, {type: "image/jpeg"}));
-      }, "image/jpeg", 0.85);
-    };
-    img.onerror = () => { resolve(file); };
-    img.src = URL.createObjectURL(file);
-  });
-}
-
 async function ocrUpload() {
   const fileInput = document.getElementById("ocrFile");
   const status = document.getElementById("ocrStatus");
@@ -262,7 +228,7 @@ async function ocrUpload() {
   if (!files.length) { status.textContent = t("msg_select_photo"); status.style.color = "var(--red)"; return; }
   if (files.length > 10) { status.textContent = t("msg_max_files"); status.style.color = "var(--red)"; return; }
 
-  // Process each file one at a time — reliable on all devices
+  // Send each file one at a time — server handles image conversion via Pillow
   let totalSaved = 0;
   let lastMethod = "";
   let lastClaudeError = "";
@@ -273,11 +239,8 @@ async function ocrUpload() {
     status.textContent = t("msg_scanning") + ` (${i + 1}/${files.length})`;
     status.style.color = "var(--gold)";
 
-    // Convert image sequentially (avoids iOS memory issues with parallel canvas)
-    const converted = await toJpeg(files[i]);
-
     const formData = new FormData();
-    formData.append("file", converted);
+    formData.append("file", files[i]);
     formData.append("language", lang);
     formData.append("restaurant_id", rid);
     formData.append("collected_by", by);
