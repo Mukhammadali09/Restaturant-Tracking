@@ -217,6 +217,30 @@ async function deleteItem(id) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  OCR MENU UPLOAD — auto-saves to restaurant, shows in browse table
 // ═══════════════════════════════════════════════════════════════════════════════
+// Convert any image to JPEG in the browser (handles iPhone HEIC)
+function toJpeg(file) {
+  return new Promise((resolve) => {
+    if (file.type === "image/jpeg" || file.type === "image/png" || file.type === "application/pdf") {
+      resolve(file);
+      return;
+    }
+    const img = new window.Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img, 0, 0);
+      c.toBlob((blob) => {
+        const name = file.name.replace(/\.\w+$/, ".jpg");
+        resolve(new File([blob], name, {type: "image/jpeg"}));
+        URL.revokeObjectURL(img.src);
+      }, "image/jpeg", 0.92);
+    };
+    img.onerror = () => { resolve(file); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 async function ocrUpload() {
   const fileInput = document.getElementById("ocrFile");
   const status = document.getElementById("ocrStatus");
@@ -231,10 +255,13 @@ async function ocrUpload() {
   status.textContent = t("msg_scanning");
   status.style.color = "var(--gold)";
 
+  // Convert all images to JPEG in the browser (handles iPhone HEIC/HEIF)
+  const converted = await Promise.all(Array.from(files).map(f => toJpeg(f)));
+
   // Send ALL files in a single request — 1 API call instead of N
   const formData = new FormData();
-  for (let i = 0; i < files.length; i++) {
-    formData.append("file", files[i]);
+  for (let i = 0; i < converted.length; i++) {
+    formData.append("file", converted[i]);
   }
   formData.append("language", lang);
   formData.append("restaurant_id", rid);
