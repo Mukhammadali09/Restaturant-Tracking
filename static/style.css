@@ -8,13 +8,13 @@
 body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:0 1rem;max-width:1400px;margin:0 auto}
 
 /* === Header === */
-header{text-align:center;padding:1.5rem 0 0;position:relative}
-header h1{font-size:1.8rem;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.subtitle{color:var(--text-muted);font-size:.9rem;margin-top:.15rem}
+header{padding:1.5rem 0 0}
+.header-top{display:flex;align-items:center;justify-content:center;position:relative}
+.header-top h1{font-size:1.8rem;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:var(--text-muted);font-size:.9rem;margin-top:.15rem;text-align:center}
 
 /* === Language Toggle === */
-.lang-toggle{position:absolute;top:1rem;right:0}
-.lang-btn{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .2s;min-width:40px}
+.lang-btn{position:absolute;right:0;top:50%;transform:translateY(-50%);background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.35rem .8rem;font-size:.82rem;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.05em}
 .lang-btn:hover{border-color:var(--accent);background:var(--accent);color:#fff}
 
 /* === Tabs === */
