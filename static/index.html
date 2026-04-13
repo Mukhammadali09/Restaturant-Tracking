@@ -66,23 +66,10 @@
         <div class="form-row" style="align-self:flex-end"><button id="ocrUploadBtn" data-i18n="btn_scan">Scan Menu</button></div>
       </div>
       <div id="ocrStatus" class="form-msg"></div>
-      <div id="ocrResults" style="display:none;margin-top:1rem">
-        <h3 style="font-size:.9rem;margin-bottom:.5rem;color:var(--text-muted)" data-i18n="ocr_parsed">Parsed Items — review, edit, and save</h3>
-        <div class="table-scroll">
-          <table id="ocrTable">
-            <thead><tr><th data-i18n="th_include">Include</th><th data-i18n="lbl_category">Category</th><th data-i18n="lbl_dish">Dish Name</th><th data-i18n="lbl_price">Price (UZS)</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div style="margin-top:.6rem;display:flex;gap:.5rem;align-items:center">
-          <button id="ocrSaveBtn" data-i18n="btn_save_selected">Save Selected Items</button>
-          <span id="ocrSaveMsg" class="form-msg"></span>
-        </div>
-        <details style="margin-top:.8rem">
-          <summary class="hint" style="cursor:pointer" data-i18n="ocr_raw">View raw OCR text</summary>
-          <pre id="ocrRawText" class="hint" style="max-height:200px;overflow:auto"></pre>
-        </details>
-      </div>
+      <details id="ocrRawDetails" style="margin-top:.5rem;display:none">
+        <summary class="hint" style="cursor:pointer" data-i18n="ocr_raw">View raw OCR text</summary>
+        <pre id="ocrRawText" class="hint" style="max-height:200px;overflow:auto"></pre>
+      </details>
     </section>
 
     <!-- CSV Upload -->

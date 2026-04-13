@@ -10,18 +10,10 @@ OCR_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
 OCR_API_URL = "https://api.ocr.space/parse/image"
 
 
-def ocr_extract_text(file_storage, language="rus"):
-    """Send a file to OCR.space and return extracted text.
-
-    Uses Engine 1 with table detection for better layout parsing of menus
-    where prices are right-aligned.
-    """
+def _ocr_api_call(file_bytes, filename, content_type, language="rus", engine=1):
+    """Low-level OCR.space API call. Returns extracted text."""
     if not OCR_API_KEY:
         raise ValueError("OCR_SPACE_API_KEY environment variable is not set")
-
-    filename = file_storage.filename or "upload"
-    file_bytes = file_storage.read()
-    file_storage.seek(0)
 
     payload = {
         "apikey": OCR_API_KEY,
@@ -29,9 +21,12 @@ def ocr_extract_text(file_storage, language="rus"):
         "isOverlayRequired": False,
         "detectOrientation": True,
         "scale": True,
-        "isTable": True,
-        "OCREngine": 1,
+        "OCREngine": engine,
     }
+
+    # Engine 1 supports table detection; Engine 2 does not
+    if engine == 1:
+        payload["isTable"] = True
 
     if filename.lower().endswith(".pdf"):
         payload["filetype"] = "PDF"
@@ -39,14 +34,18 @@ def ocr_extract_text(file_storage, language="rus"):
     resp = requests.post(
         OCR_API_URL,
         data=payload,
-        files={"file": (filename, file_bytes, file_storage.content_type or "application/octet-stream")},
+        files={"file": (filename, file_bytes, content_type)},
         timeout=120,
     )
     resp.raise_for_status()
     result = resp.json()
 
     if result.get("IsErroredOnProcessing"):
-        error_msg = result.get("ErrorMessage") or result.get("ErrorDetails") or "OCR processing failed"
+        error_msg = (
+            result.get("ErrorMessage")
+            or result.get("ErrorDetails")
+            or "OCR processing failed"
+        )
         raise ValueError(f"OCR error: {error_msg}")
 
     pages = result.get("ParsedResults", [])
@@ -56,19 +55,64 @@ def ocr_extract_text(file_storage, language="rus"):
     return "\n".join(p.get("ParsedText", "") for p in pages)
 
 
+def ocr_extract_text(file_storage, language="rus"):
+    """Send a file to OCR.space and return extracted text.
+
+    Wrapper that reads bytes from a FileStorage object.
+    """
+    filename = file_storage.filename or "upload"
+    file_bytes = file_storage.read()
+    content_type = file_storage.content_type or "application/octet-stream"
+    return _ocr_api_call(file_bytes, filename, content_type, language, engine=1)
+
+
+def ocr_dual_engine(file_bytes, filename, content_type, language="rus"):
+    """Try both OCR engines and return whichever extracts more menu items.
+
+    Engine 1: good for table layouts (prices right-aligned)
+    Engine 2: better for decorative/photo menus with stylized fonts
+    """
+    raw1, items1 = "", []
+    raw2, items2 = "", []
+
+    # Engine 1 with table detection
+    try:
+        raw1 = _ocr_api_call(file_bytes, filename, content_type, language, engine=1)
+        items1 = parse_menu_text(raw1)
+    except Exception:
+        pass
+
+    # Engine 2 for decorative menus
+    try:
+        raw2 = _ocr_api_call(file_bytes, filename, content_type, language, engine=2)
+        items2 = parse_menu_text(raw2)
+    except Exception:
+        pass
+
+    # Return whichever found more items
+    if len(items2) > len(items1):
+        return raw2, items2
+    if items1:
+        return raw1, items1
+    # Both empty — return Engine 1 text if available
+    return raw1 or raw2, []
+
+
 def clean_ocr_name(name):
     """Clean OCR artifacts from dish names.
 
     Strips common misreadings of menu icons (N), (V), circled letters,
-    and other OCR garbage characters.  Runs two passes so that junk
-    exposed by earlier substitutions (e.g. '{' left after '(y)' removal)
-    is also caught.
+    numbering like A), B), 1), and other OCR garbage characters.
+    Runs two passes so that junk exposed by earlier substitutions
+    (e.g. '{' left after '(y)' removal) is also caught.
     """
     for _ in range(2):
-        # Remove leading OCR junk: @, @@, {, }, (), (N), (V), (84), (y), etc.
+        # Remove leading OCR junk: @, @@, {, }, [], #, * etc.
         name = re.sub(r'^[\s@{}\[\]#*]+', '', name)
         # Remove leading parenthesized garbage: (N), (V), (84), (y), etc.
         name = re.sub(r'^\([^)]{0,5}\)\s*', '', name)
+        # Remove leading single-char numbering: A), B), 1), 2), etc.
+        name = re.sub(r'^[A-Za-zА-Яа-яЁё0-9]\)\s*', '', name)
         # Remove circled/special unicode chars that OCR might produce
         name = re.sub(r'^[®©™⓪①②③④⑤⑥⑦⑧⑨ⓝⓥⓃⓋ]+\s*', '', name)
     # Remove trailing @, {, }, etc.
@@ -118,7 +162,7 @@ def parse_menu_text(raw_text):
 
     def is_junk_line(line):
         """Check if a line is likely junk (too short, only symbols, etc.)."""
-        stripped = re.sub(r'[\s@{}\[\]()#*.,\-–—_…]+', '', line)
+        stripped = re.sub(r'[\s@{}\[\]()#*.,\-\u2013\u2014_\u2026]+', '', line)
         return len(stripped) < 2
 
     def is_description(line):
@@ -132,31 +176,31 @@ def parse_menu_text(raw_text):
 
     def is_category_header(line):
         """Only treat as category if it clearly looks like a section header."""
-        # Clean the line first
-        cleaned = re.sub(r'[^A-Za-zА-Яа-яЁё\s:/&\-]', '', line).strip()
+        cleaned = re.sub(r'[^A-Za-z\u0410-\u042f\u0430-\u044f\u0401\u0451\s:/&\-]', '', line).strip()
         if not cleaned or len(cleaned) < 3:
             return False
         if re.search(r'\d', line):
             return False
         if len(cleaned) > 25:
             return False
-        # Lines ending with colon
         if line.rstrip().endswith(':'):
             return True
-        # Known category words (English and Russian)
         lower = cleaned.lower()
         category_words = [
             'pasta', 'seafood', 'meat', 'desserts', 'dessert', 'salads', 'salad',
             'soups', 'soup', 'appetizers', 'starters', 'mains', 'main courses',
             'drinks', 'beverages', 'wine', 'sides', 'sauces', 'grill',
             'meat dishes', 'fish', 'cold appetizers', 'hot appetizers',
-            'салаты', 'супы', 'горячее', 'десерты', 'закуски', 'напитки',
-            'паста', 'мясо', 'рыба', 'гриль', 'основные блюда',
+            '\u0441\u0430\u043b\u0430\u0442\u044b', '\u0441\u0443\u043f\u044b',
+            '\u0433\u043e\u0440\u044f\u0447\u0435\u0435', '\u0434\u0435\u0441\u0435\u0440\u0442\u044b',
+            '\u0437\u0430\u043a\u0443\u0441\u043a\u0438', '\u043d\u0430\u043f\u0438\u0442\u043a\u0438',
+            '\u043f\u0430\u0441\u0442\u0430', '\u043c\u044f\u0441\u043e',
+            '\u0440\u044b\u0431\u0430', '\u0433\u0440\u0438\u043b\u044c',
+            '\u043e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0431\u043b\u044e\u0434\u0430',
             'durum wheat pasta',
         ]
         if lower in category_words:
             return True
-        # Two-word categories in ALL CAPS
         words = cleaned.split()
         if len(words) <= 2 and cleaned == cleaned.upper():
             return True
@@ -169,7 +213,6 @@ def parse_menu_text(raw_text):
         if not line:
             continue
 
-        # Skip junk lines
         if is_junk_line(line):
             continue
 
@@ -222,11 +265,13 @@ def parse_menu_text(raw_text):
 
         # 6. Check for category header
         if is_category_header(line):
-            current_category = re.sub(r'[^A-Za-zА-Яа-яЁё\s/&\-]', '', line).strip().title()
+            current_category = re.sub(
+                r'[^A-Za-z\u0410-\u042f\u0430-\u044f\u0401\u0451\s/&\-]', '', line
+            ).strip().title()
             pending_name = None
             continue
 
-        # 7. Potential dish name — store for pairing with price on next line
+        # 7. Potential dish name -- store for pairing with price on next line
         cleaned_line = clean_ocr_name(line)
         if cleaned_line and len(cleaned_line) > 2 and cleaned_line[0].isupper():
             pending_name = cleaned_line

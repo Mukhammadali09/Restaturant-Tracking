@@ -32,7 +32,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("restDistrictFilter").addEventListener("change", renderRestaurantTable);
   document.getElementById("addRestaurantForm").addEventListener("submit", addRestaurant);
   document.getElementById("ocrUploadBtn").addEventListener("click", ocrUpload);
-  document.getElementById("ocrSaveBtn").addEventListener("click", ocrSaveItems);
 
   document.getElementById("mfDate").valueAsDate = new Date();
 });
@@ -195,21 +194,22 @@ async function deleteItem(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  OCR MENU UPLOAD
+//  OCR MENU UPLOAD — auto-saves to restaurant, shows in browse table
 // ═══════════════════════════════════════════════════════════════════════════════
 async function ocrUpload() {
   const fileInput = document.getElementById("ocrFile");
   const status = document.getElementById("ocrStatus");
-  const resultsDiv = document.getElementById("ocrResults");
+  const rid = document.getElementById("ocrRestaurant").value;
+  const by = document.getElementById("ocrBy").value || "OCR Upload";
+  const lang = document.getElementById("ocrLang").value;
   const files = fileInput.files;
 
-  if (!files.length) { status.textContent = t("msg_select_photo"); return; }
+  if (!files.length) { status.textContent = t("msg_select_photo"); status.style.color = "var(--red)"; return; }
 
   status.textContent = t("msg_scanning") + (files.length > 1 ? ` (1/${files.length})` : "");
   status.style.color = "var(--gold)";
-  resultsDiv.style.display = "none";
 
-  let allItems = [];
+  let totalSaved = 0;
   let allRawText = "";
   let errors = [];
 
@@ -219,7 +219,9 @@ async function ocrUpload() {
     }
     const formData = new FormData();
     formData.append("file", files[i]);
-    formData.append("language", document.getElementById("ocrLang").value);
+    formData.append("language", lang);
+    formData.append("restaurant_id", rid);
+    formData.append("collected_by", by);
 
     try {
       const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
@@ -230,74 +232,45 @@ async function ocrUpload() {
         continue;
       }
 
-      allItems = allItems.concat(data.parsed_items);
-      allRawText += (allRawText ? "\n\n--- " + files[i].name + " ---\n\n" : "") + data.raw_text;
+      totalSaved += data.saved || 0;
+      allRawText += (allRawText ? "\n\n--- " + files[i].name + " ---\n\n" : "") + (data.raw_text || "");
     } catch (e) {
       errors.push(`${files[i].name}: ${e.message}`);
     }
   }
 
-  if (errors.length && !allItems.length) {
+  if (errors.length && totalSaved === 0) {
     status.textContent = errors.join("; ");
     status.style.color = "var(--red)";
     return;
   }
 
-  let msg = t("msg_found_items", allItems.length);
-  if (files.length > 1) msg += ` (${files.length} files)`;
-  if (errors.length) msg += ` | Errors: ${errors.join("; ")}`;
+  // Show raw OCR text for debugging
+  if (allRawText) {
+    document.getElementById("ocrRawText").textContent = allRawText;
+    document.getElementById("ocrRawDetails").style.display = "block";
+  }
+
+  // Build success message
+  const restName = document.querySelector(`#ocrRestaurant option[value="${rid}"]`)?.textContent || "";
+  let msg = t("msg_ocr_saved", totalSaved, restName);
+  if (errors.length) msg += " | " + errors.join("; ");
   status.textContent = msg;
   status.style.color = "var(--green)";
 
-  document.getElementById("ocrRawText").textContent = allRawText;
+  // Clear file input
+  fileInput.value = "";
 
-  const tbody = document.querySelector("#ocrTable tbody");
-  tbody.innerHTML = "";
-  allItems.forEach((item, i) => {
-    tbody.innerHTML += `<tr>
-      <td><input type="checkbox" class="ocr-check" data-idx="${i}" checked /></td>
-      <td><input type="text" class="ocr-cat" data-idx="${i}" value="${escHtml(item.category)}" style="width:140px" /></td>
-      <td><input type="text" class="ocr-name" data-idx="${i}" value="${escHtml(item.name)}" style="min-width:300px" /></td>
-      <td><input type="number" class="ocr-price" data-idx="${i}" value="${item.price}" min="0" style="width:110px" /></td>
-    </tr>`;
-  });
+  // Auto-select restaurant in browse and show the menu table
+  const browseSelect = document.getElementById("browseRestaurant");
+  browseSelect.value = rid;
+  await browseMenu();
 
-  resultsDiv.style.display = "block";
-  document.getElementById("ocrSaveMsg").textContent = "";
-}
+  // Scroll to the browse area so user sees the added items
+  document.getElementById("browseMenuArea").scrollIntoView({behavior: "smooth", block: "start"});
 
-async function ocrSaveItems() {
-  const rid = document.getElementById("ocrRestaurant").value;
-  const by = document.getElementById("ocrBy").value || "OCR Upload";
-  const msg = document.getElementById("ocrSaveMsg");
-
-  const rows = document.querySelectorAll("#ocrTable tbody tr");
-  const items = [];
-  rows.forEach(row => {
-    if (!row.querySelector(".ocr-check").checked) return;
-    items.push({
-      category: row.querySelector(".ocr-cat").value,
-      name: row.querySelector(".ocr-name").value,
-      price: +row.querySelector(".ocr-price").value,
-    });
-  });
-
-  if (!items.length) { msg.textContent = t("msg_no_selected"); return; }
-
-  const data = await postJSON("/api/menu/ocr/save", {
-    restaurant_id: +rid,
-    items: items,
-    collected_by: by,
-  });
-
-  msg.textContent = t("msg_saved_items", data.added);
-  msg.style.color = "var(--green)";
-  document.getElementById("ocrFile").value = "";
-  document.getElementById("ocrResults").style.display = "none";
-  document.getElementById("ocrStatus").textContent = "";
+  // Refresh coverage stats
   loadMenuManagement();
-  const browseRid = document.getElementById("browseRestaurant").value;
-  if (browseRid) browseMenu();
 }
 
 function escHtml(s) {

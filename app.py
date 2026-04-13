@@ -10,7 +10,7 @@ from sqlalchemy import func
 
 import config
 from models import MenuItem, PriceHistory, Restaurant, db
-from ocr import ocr_extract_text, parse_menu_text
+from ocr import ocr_dual_engine, parse_menu_text
 from seed import seed_database
 
 
@@ -233,7 +233,11 @@ def create_app():
 
     @app.route("/api/menu/ocr", methods=["POST"])
     def ocr_menu_upload():
-        """Upload a photo or PDF of a menu. OCR extracts text and parses dishes/prices."""
+        """Upload a photo or PDF of a menu.
+
+        Uses both OCR engines and picks whichever extracts more items.
+        Auto-saves items to the restaurant when restaurant_id is provided.
+        """
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
@@ -241,46 +245,46 @@ def create_app():
         if not f.filename:
             return jsonify({"error": "Empty filename"}), 400
 
-        # Default to Russian since most Tashkent menus are in Russian
         ocr_lang = request.form.get("language", "rus")
+        restaurant_id = request.form.get("restaurant_id", type=int)
+        collected_by = request.form.get("collected_by", "OCR Upload")
+
+        # Read bytes once for dual-engine processing
+        filename = f.filename or "upload"
+        file_bytes = f.read()
+        content_type = f.content_type or "application/octet-stream"
 
         try:
-            raw_text = ocr_extract_text(f, language=ocr_lang)
+            raw_text, items = ocr_dual_engine(
+                file_bytes, filename, content_type, language=ocr_lang,
+            )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             return jsonify({"error": f"OCR request failed: {str(e)}"}), 500
 
-        items = parse_menu_text(raw_text)
-        return jsonify({"raw_text": raw_text, "parsed_items": items})
+        # Auto-save items to the restaurant
+        saved = 0
+        if restaurant_id and items:
+            for item in items:
+                mi = MenuItem(
+                    restaurant_id=restaurant_id,
+                    category=item.get("category", "Uncategorized"),
+                    name=item["name"],
+                    name_normalized=item["name"].lower().strip(),
+                    price=int(item["price"]),
+                    collected_by=collected_by,
+                    collected_date=date.today(),
+                )
+                db.session.add(mi)
+                saved += 1
+            db.session.commit()
 
-    @app.route("/api/menu/ocr/save", methods=["POST"])
-    def ocr_save_items():
-        """Save OCR-parsed items after user review/edit."""
-        data = request.get_json()
-        restaurant_id = data.get("restaurant_id")
-        items = data.get("items", [])
-        collected_by = data.get("collected_by", "OCR Upload")
-
-        if not restaurant_id:
-            return jsonify({"error": "restaurant_id required"}), 400
-
-        added = 0
-        for item in items:
-            mi = MenuItem(
-                restaurant_id=restaurant_id,
-                category=item.get("category", "Uncategorized"),
-                name=item["name"],
-                name_normalized=item["name"].lower().strip(),
-                price=int(item["price"]),
-                description=item.get("description", ""),
-                collected_by=collected_by,
-                collected_date=date.today(),
-            )
-            db.session.add(mi)
-            added += 1
-        db.session.commit()
-        return jsonify({"added": added})
+        return jsonify({
+            "raw_text": raw_text,
+            "parsed_items": items,
+            "saved": saved,
+        })
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PRICE COMPARISON
