@@ -10,6 +10,7 @@ import sys
 # Make the project root importable (models, config, seed, etc.)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import create_app  # noqa: E402
+from app import app  # noqa: E402
 
-app = create_app()
+# `app` is already created as a module-level Flask instance in app.py.
+# Re-calling create_app() would double-initialize SQLAlchemy and break requests.
