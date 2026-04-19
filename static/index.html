@@ -40,7 +40,7 @@
     <div class="header-top">
       <h1 data-i18n="title">Tashkent Restaurant Market Tracker</h1>
       <div class="header-actions">
-        <span id="userDisplayName" class="user-name"></span>
+        <button id="profileBtn" type="button" class="user-name-btn"><span id="userDisplayName" class="user-name"></span></button>
         <button id="logoutBtn" class="lang-btn" type="button">Logout</button>
         <button id="langBtn" class="lang-btn" onclick="toggleLang()">RU</button>
       </div>
@@ -51,6 +51,7 @@
       <button class="tab" data-tab="competitive" data-i18n="tab_competitive">Competitive Analysis</button>
       <button class="tab" data-tab="price-compare" data-i18n="tab_price">Price Lookup</button>
       <button class="tab" data-tab="market" data-i18n="tab_market">Market Analytics</button>
+      <button class="tab" data-tab="engineering" data-i18n="tab_engineering">Menu Engineering</button>
       <button class="tab" data-tab="restaurants" data-i18n="tab_restaurants">Restaurants</button>
     </nav>
   </header>
@@ -368,7 +369,33 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
     </section>
   </main>
 
-  <!-- ═══ TAB 5: RESTAURANTS ═══ -->
+  <!-- ═══ TAB 5: MENU ENGINEERING ═══ -->
+  <main id="tab-engineering" class="tab-content">
+    <section class="form-section">
+      <h2>Menu Engineering Matrix</h2>
+      <p class="hint">Analyze your menu positioning: Stars (keep & promote), Plowhorses (re-price), Puzzles (promote), Dogs (remove or redesign).</p>
+      <div class="controls">
+        <label>Restaurant <select id="engRestaurant"></select></label>
+        <button type="button" id="engRunBtn" class="btn">Analyze</button>
+        <button type="button" id="engExportBtn" class="btn btn-outline">Export CSV</button>
+      </div>
+    </section>
+    <section id="engSummary" class="card-row" style="display:none">
+      <div class="card"><span class="card-label">Stars</span><span id="engStars" class="card-value green">—</span></div>
+      <div class="card"><span class="card-label">Plowhorses</span><span id="engPlowhorses" class="card-value gold">—</span></div>
+      <div class="card"><span class="card-label">Puzzles</span><span id="engPuzzles" class="card-value blue">—</span></div>
+      <div class="card"><span class="card-label">Dogs</span><span id="engDogs" class="card-value red">—</span></div>
+    </section>
+    <section id="engResults"></section>
+
+    <section class="form-section" style="margin-top:2rem">
+      <h2>Price Recommendations</h2>
+      <p class="hint">AI-driven suggestions based on competitive market data.</p>
+      <div id="priceRecResults"></div>
+    </section>
+  </main>
+
+  <!-- ═══ TAB 6: RESTAURANTS ═══ -->
   <main id="tab-restaurants" class="tab-content">
     <section class="form-section">
       <h2 data-i18n="add_rest">Add New Restaurant</h2>
@@ -404,6 +431,32 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
   </main>
 
   <footer><p data-i18n="footer">Tashkent Restaurant Market Tracker &mdash; All prices are manually collected from real menus</p></footer>
+
+  <!-- Profile Modal -->
+  <div id="profileModal" class="modal hidden">
+    <div class="modal-content auth-card">
+      <div class="modal-header">
+        <h2>Profile Settings</h2>
+        <button type="button" class="close-btn" onclick="document.getElementById('profileModal').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="profile-avatar" id="profileAvatar"></div>
+      <form id="profileForm">
+        <label>Name <input id="pfName" required /></label>
+        <label>Company <input id="pfCompany" /></label>
+        <label>Email <input id="pfEmail" disabled /></label>
+        <label>Role <input id="pfRole" disabled /></label>
+        <button type="submit" class="auth-submit">Save Changes</button>
+      </form>
+      <hr style="border-color:var(--border);margin:1.2rem 0" />
+      <h3 style="font-size:.95rem;margin-bottom:.8rem">Change Password</h3>
+      <form id="passwordForm">
+        <label>Current Password <input id="pwCurrent" type="password" required /></label>
+        <label>New Password <input id="pwNew" type="password" required minlength="6" /></label>
+        <button type="submit" class="auth-submit">Update Password</button>
+      </form>
+      <p id="profileMsg" class="auth-error"></p>
+    </div>
+  </div>
 </div><!-- /appShell -->
   <script src="i18n.js"></script>
   <script src="app.js"></script>

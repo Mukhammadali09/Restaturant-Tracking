@@ -122,6 +122,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     b.addEventListener("click", () => switchAuthMode(b.dataset.mode));
   });
   document.getElementById("logoutBtn").addEventListener("click", logout);
+  document.getElementById("profileBtn").addEventListener("click", openProfile);
+  document.getElementById("profileForm").addEventListener("submit", saveProfile);
+  document.getElementById("passwordForm").addEventListener("submit", changePassword);
+  document.getElementById("engRunBtn").addEventListener("click", runMenuEngineering);
+  document.getElementById("engExportBtn").addEventListener("click", exportCSV);
 
   // Event listeners for app features
   document.getElementById("menuForm").addEventListener("submit", submitMenuItem);
@@ -155,6 +160,7 @@ function setupTabs() {
       if (btn.dataset.tab === "competitive") loadCompetitiveTab();
       if (btn.dataset.tab === "price-compare") loadPriceCompareTab();
       if (btn.dataset.tab === "market") loadMarketAnalytics();
+      if (btn.dataset.tab === "engineering") loadEngineeringTab();
       if (btn.dataset.tab === "restaurants") renderRestaurantTable();
     });
   });
@@ -905,6 +911,160 @@ async function deleteRestaurant(id, name) {
 
   renderRestaurantTable();
   loadMenuManagement();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROFILE
+// ═══════════════════════════════════════════════════════════════════════════════
+function openProfile() {
+  const u = currentUser();
+  if (!u) return;
+  document.getElementById("pfName").value = u.name || "";
+  document.getElementById("pfCompany").value = u.company || "";
+  document.getElementById("pfEmail").value = u.email || "";
+  document.getElementById("pfRole").value = (u.role || "manager").charAt(0).toUpperCase() + (u.role || "manager").slice(1);
+  const avatar = document.getElementById("profileAvatar");
+  const initials = u.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  avatar.innerHTML = u.photo_url
+    ? `<img src="${u.photo_url}" class="avatar-img" />`
+    : `<div class="avatar-initials">${initials}</div>`;
+  document.getElementById("profileMsg").textContent = "";
+  document.getElementById("profileModal").classList.remove("hidden");
+}
+
+async function saveProfile(e) {
+  e.preventDefault();
+  const data = {
+    name: document.getElementById("pfName").value.trim(),
+    company: document.getElementById("pfCompany").value.trim(),
+  };
+  const r = await putJSON("/api/auth/profile", data);
+  if (r.error) { document.getElementById("profileMsg").textContent = r.error; return; }
+  setAuth(getToken(), r);
+  document.getElementById("userDisplayName").textContent = r.name + (r.company ? " — " + r.company : "");
+  document.getElementById("profileMsg").style.color = "var(--green)";
+  document.getElementById("profileMsg").textContent = "Profile updated!";
+  setTimeout(() => { document.getElementById("profileMsg").textContent = ""; document.getElementById("profileMsg").style.color = ""; }, 2000);
+}
+
+async function changePassword(e) {
+  e.preventDefault();
+  const data = {
+    current_password: document.getElementById("pwCurrent").value,
+    new_password: document.getElementById("pwNew").value,
+  };
+  const r = await putJSON("/api/auth/password", data);
+  const msg = document.getElementById("profileMsg");
+  if (r.error) { msg.style.color = "var(--red)"; msg.textContent = r.error; return; }
+  msg.style.color = "var(--green)";
+  msg.textContent = "Password updated!";
+  document.getElementById("passwordForm").reset();
+  setTimeout(() => { msg.textContent = ""; msg.style.color = ""; }, 2000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MENU ENGINEERING
+// ═══════════════════════════════════════════════════════════════════════════════
+function loadEngineeringTab() {
+  const sel = document.getElementById("engRestaurant");
+  if (!sel.options.length) {
+    restaurants.forEach(r => { sel.innerHTML += `<option value="${r.id}">${r.name}</option>`; });
+  }
+}
+
+async function runMenuEngineering() {
+  const rid = document.getElementById("engRestaurant").value;
+  if (!rid) return;
+
+  const data = await fetchJSON(`/api/analytics/menu-engineering?restaurant_id=${rid}`);
+  const recData = await fetchJSON(`/api/analytics/price-recommendations?restaurant_id=${rid}`);
+
+  // Summary cards
+  const s = data.summary;
+  document.getElementById("engSummary").style.display = "";
+  document.getElementById("engStars").textContent = s.stars;
+  document.getElementById("engPlowhorses").textContent = s.plowhorses;
+  document.getElementById("engPuzzles").textContent = s.puzzles;
+  document.getElementById("engDogs").textContent = s.dogs;
+
+  // Matrix table
+  const quadrantEmoji = { star: "★", plowhorse: "⚙", puzzle: "?", dog: "✕" };
+  const quadrantClass = { star: "green", plowhorse: "gold", puzzle: "blue", dog: "red" };
+  const quadrantLabel = { star: "Star", plowhorse: "Plowhorse", puzzle: "Puzzle", dog: "Dog" };
+
+  let html = `<table class="data-table"><thead><tr>
+    <th>Dish</th><th>Category</th><th>Price</th><th>Market Avg</th><th>vs Market</th>
+    <th>Popularity</th><th>Classification</th><th>Found At</th>
+  </tr></thead><tbody>`;
+
+  const sorted = [...data.items].sort((a, b) => {
+    const order = { star: 0, plowhorse: 1, puzzle: 2, dog: 3 };
+    return (order[a.quadrant] || 0) - (order[b.quadrant] || 0);
+  });
+
+  for (const item of sorted) {
+    const diff = item.price_vs_market;
+    const diffClass = diff > 0 ? "green" : diff < 0 ? "red" : "";
+    html += `<tr>
+      <td>${item.name}</td>
+      <td>${item.category}</td>
+      <td>${fmt(item.price)}</td>
+      <td>${fmt(item.market_avg)}</td>
+      <td class="${diffClass}">${diff > 0 ? "+" : ""}${diff}%</td>
+      <td>${item.popularity} restaurants</td>
+      <td><span class="${quadrantClass[item.quadrant]}">${quadrantEmoji[item.quadrant]} ${quadrantLabel[item.quadrant]}</span></td>
+      <td class="small-text">${(item.matched_restaurants || []).join(", ") || "—"}</td>
+    </tr>`;
+  }
+  html += "</tbody></table>";
+  document.getElementById("engResults").innerHTML = html;
+
+  // Price recommendations
+  if (recData.recommendations && recData.recommendations.length) {
+    let recHtml = `<div class="card-row" style="margin-bottom:1rem">
+      <div class="card"><span class="card-label">Items Analyzed</span><span class="card-value">${recData.summary.total_items_analyzed}</span></div>
+      <div class="card"><span class="card-label">Price Raises</span><span class="card-value green">${recData.summary.raise_count}</span></div>
+      <div class="card"><span class="card-label">Price Lowers</span><span class="card-value red">${recData.summary.lower_count}</span></div>
+      <div class="card"><span class="card-label">Revenue Opportunity</span><span class="card-value gold">${fmt(recData.summary.total_revenue_opportunity)} UZS/item</span></div>
+    </div>`;
+
+    recHtml += `<table class="data-table"><thead><tr>
+      <th>Dish</th><th>Current</th><th>Market Avg</th><th>Diff</th>
+      <th>Suggested</th><th>Action</th><th>Reason</th>
+    </tr></thead><tbody>`;
+
+    for (const r of recData.recommendations) {
+      const actionClass = r.action === "raise" ? "green" : r.action === "lower" ? "red" : "gold";
+      recHtml += `<tr>
+        <td>${r.dish}</td>
+        <td>${fmt(r.current_price)}</td>
+        <td>${fmt(r.market_avg)}</td>
+        <td class="${r.diff_pct < 0 ? "red" : "green"}">${r.diff_pct > 0 ? "+" : ""}${r.diff_pct}%</td>
+        <td><strong>${fmt(r.suggested_price)}</strong></td>
+        <td class="${actionClass}">${r.action.toUpperCase()}</td>
+        <td class="small-text">${r.reason}</td>
+      </tr>`;
+    }
+    recHtml += "</tbody></table>";
+    document.getElementById("priceRecResults").innerHTML = recHtml;
+  } else {
+    document.getElementById("priceRecResults").innerHTML = '<p class="hint">No pricing recommendations — your prices are well-aligned with the market.</p>';
+  }
+}
+
+function exportCSV() {
+  const rid = document.getElementById("engRestaurant").value;
+  const url = rid ? `/api/export/menu-data?restaurant_id=${rid}` : "/api/export/menu-data";
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "menu_data.csv";
+  // Add auth header via fetch
+  fetch(url, { headers: authHeaders() })
+    .then(r => r.blob())
+    .then(blob => {
+      a.href = URL.createObjectURL(blob);
+      a.click();
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@ import config
 from auth import auth_required, generate_token
 from models import MenuItem, PriceHistory, Restaurant, User, db
 from ocr import parse_menu_image
-from seed import seed_database_for_user
+from seed import seed_database
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -29,27 +29,62 @@ _RE_VOLUME = re.compile(
 _RE_TRAILING_NUM = re.compile(r"\s+\d+\s*$")
 _RE_WHITESPACE = re.compile(r"\s+")
 
+# Modifiers/descriptors to ignore when comparing dish names.
+# These words describe preparation or style but not the actual dish.
+_MODIFIERS = frozenset({
+    # English
+    "classic", "traditional", "fresh", "homemade", "house", "signature",
+    "special", "original", "authentic", "our", "new", "seasonal", "premium",
+    "deluxe", "supreme", "grilled", "baked", "fried", "roasted", "steamed",
+    "braised", "sauteed", "sautéed", "crispy", "tender", "warm", "cold",
+    "chilled", "hot", "mini", "large", "small", "big", "style", "with",
+    "and", "the", "a", "an", "in", "on", "of", "for", "from", "by",
+    "al", "alla", "au", "aux", "con", "e", "di", "del", "la", "le",
+    "italian", "french", "asian", "russian", "uzbek", "georgian", "turkish",
+    "japanese", "chinese", "thai", "indian", "american", "european",
+    "mediterranean", "modern", "chef", "chefs",
+    # Russian
+    "классический", "традиционный", "свежий", "домашний", "наш",
+    "фирменный", "особый", "оригинальный", "авторский", "жареный",
+    "запечённый", "запеченный", "тёплый", "теплый", "холодный", "мини",
+    "большой", "маленький", "нежный", "хрустящий", "острый",
+    "по", "с", "и", "в", "на", "из", "от", "для", "со", "под",
+})
+
 
 def _core_name(name):
     """Extract the core dish name by stripping volumes, sizes, parenthetical info."""
     s = name.lower().strip()
-    s = _RE_PARENS.sub("", s)       # Remove (glass), (bottle), (750ml), etc.
-    s = _RE_VOLUME.sub("", s)       # Remove 70ml, 200g, 1l, etc.
-    s = _RE_TRAILING_NUM.sub("", s) # Remove trailing numbers like "... 750"
+    s = _RE_PARENS.sub("", s)
+    s = _RE_VOLUME.sub("", s)
+    s = _RE_TRAILING_NUM.sub("", s)
     s = _RE_WHITESPACE.sub(" ", s).strip()
     return s
+
+
+def _food_tokens(name):
+    """Extract food-relevant tokens by stripping modifiers.
+
+    "Classic Italian burrata" → {"burrata"}
+    "Salad burrata with tomatoes" → {"salad", "burrata", "tomatoes"}
+    "Grilled chicken" → {"chicken"}
+    "Grilled salmon" → {"salmon"}
+    """
+    core = _core_name(name)
+    tokens = core.split()
+    food = {t for t in tokens if t not in _MODIFIERS and len(t) >= 3}
+    return food if food else set(tokens)
 
 
 def _dish_similarity(name1, name2):
     """Compute similarity between two dish names. Returns 0.0-1.0.
 
-    Strategy:
-    - Exact core names → 1.0
-    - One name is a token subset of the other (e.g. "Fries" ⊂ "French Fries",
-      "Caesar Salad" ⊂ "Caesar Salad with Chicken") → 0.80–1.0
-    - Otherwise average containment, Jaccard, and sequence similarity.
-      This avoids false positives like "Grilled Salmon" vs "Grilled Chicken"
-      where SequenceMatcher alone gives misleadingly high scores.
+    Uses a three-layer strategy:
+    1. Exact core match → 1.0
+    2. Full token containment → 0.80–1.0
+    3. Food-token matching (strips modifiers) + classic metrics.
+       This catches "Classic Italian burrata" ≈ "Salad burrata with tomatoes"
+       while still rejecting "Grilled chicken" ≠ "Grilled salmon".
     """
     c1 = _core_name(name1)
     c2 = _core_name(name2)
@@ -62,32 +97,37 @@ def _dish_similarity(name1, name2):
     tokens1 = set(c1.split())
     tokens2 = set(c2.split())
 
-    # Containment: fraction of smaller set's tokens found in larger set
     smaller = tokens1 if len(tokens1) <= len(tokens2) else tokens2
     larger = tokens1 if len(tokens1) > len(tokens2) else tokens2
     containment = len(smaller & larger) / len(smaller) if smaller else 0.0
 
-    # Jaccard
     union = tokens1 | tokens2
     jaccard = len(tokens1 & tokens2) / len(union) if union else 0.0
 
-    # If all tokens from the shorter name appear in the longer name,
-    # it's very likely the same dish with extra description
     if containment >= 1.0:
         return 0.80 + 0.20 * jaccard
 
-    # Sequence similarity (catches spelling variants like "Tom Yam" / "Tom Yum")
     seq_sim = SequenceMatcher(None, c1, c2).ratio()
 
-    # Balanced average: requires agreement across all three measures,
-    # preventing false positives from SequenceMatcher alone
+    # --- Food-token boost ---
+    # Strip modifiers and compare what's left (the actual food words).
+    food1 = _food_tokens(name1)
+    food2 = _food_tokens(name2)
+    food_overlap = food1 & food2
+
+    if food_overlap and food1 and food2:
+        food_score = len(food_overlap) / min(len(food1), len(food2))
+        if food_score >= 0.5:
+            base = (containment + jaccard + seq_sim) / 3.0
+            return max(base, 0.55 + 0.35 * food_score)
+
     return (containment + jaccard + seq_sim) / 3.0
 
 
 # Similarity threshold: >= this value counts as "same dish"
-_MATCH_THRESHOLD = 0.6
+_MATCH_THRESHOLD = 0.55
 # Same-category bonus: if two dishes share a category, we relax the threshold
-_SAME_CAT_BONUS = 0.1
+_SAME_CAT_BONUS = 0.12
 
 
 def _find_matches(base_items, comp_items):
@@ -165,6 +205,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        seed_database()
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  STATIC
@@ -200,9 +241,6 @@ def create_app():
         db.session.add(user)
         db.session.commit()
 
-        # Seed starter restaurants for the new user
-        seed_database_for_user(user.id)
-
         token = generate_token(user.id)
         return jsonify({"token": token, "user": user.to_dict()}), 201
 
@@ -226,40 +264,25 @@ def create_app():
     #  RESTAURANTS
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _user_restaurant_q():
-        """Base query filtering restaurants to the current user."""
-        return Restaurant.query.filter_by(user_id=g.user_id)
+    def _all_restaurants():
+        return Restaurant.query
 
-    def _get_user_restaurant_or_404(rid):
-        r = Restaurant.query.filter_by(id=rid, user_id=g.user_id).first()
-        if not r:
-            from flask import abort
-            abort(404)
-        return r
+    def _get_restaurant_or_404(rid):
+        return Restaurant.query.get_or_404(rid)
 
-    def _get_user_menu_item_or_404(mid):
-        """Load a menu item scoped to the current user's restaurants."""
-        mi = (
-            MenuItem.query
-            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
-            .filter(MenuItem.id == mid, Restaurant.user_id == g.user_id)
-            .first()
-        )
-        if not mi:
-            from flask import abort
-            abort(404)
-        return mi
+    def _get_menu_item_or_404(mid):
+        return MenuItem.query.get_or_404(mid)
 
     @app.route("/api/restaurants")
     @auth_required
     def list_restaurants():
-        restaurants = _user_restaurant_q().order_by(Restaurant.name).all()
+        restaurants = _all_restaurants().order_by(Restaurant.name).all()
         return jsonify([r.to_dict() for r in restaurants])
 
     @app.route("/api/restaurants/<int:rid>")
     @auth_required
     def get_restaurant(rid):
-        r = _get_user_restaurant_or_404(rid)
+        r = _get_restaurant_or_404(rid)
         return jsonify(r.to_dict())
 
     @app.route("/api/restaurants", methods=["POST"])
@@ -267,7 +290,7 @@ def create_app():
     def add_restaurant():
         data = request.get_json()
         r = Restaurant(
-            user_id=g.user_id,
+            user_id=g.user_id,  # audit: who added it
             name=data["name"], cuisine=data["cuisine"], address=data["address"],
             district=data.get("district", "Tashkent"), phone=data.get("phone"),
             price_segment=data.get("price_segment", "Premium"),
@@ -281,7 +304,7 @@ def create_app():
     @app.route("/api/restaurants/<int:rid>", methods=["DELETE"])
     @auth_required
     def delete_restaurant(rid):
-        r = _get_user_restaurant_or_404(rid)
+        r = _get_restaurant_or_404(rid)
         db.session.delete(r)
         db.session.commit()
         return jsonify({"deleted": rid})
@@ -290,20 +313,12 @@ def create_app():
     #  MENU MANAGEMENT (core of the tool)
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _user_menu_q():
-        """Base menu query scoped to current user's restaurants."""
-        return (
-            MenuItem.query
-            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
-            .filter(Restaurant.user_id == g.user_id)
-        )
-
     @app.route("/api/menu")
     @auth_required
     def list_menu():
         restaurant_id = request.args.get("restaurant_id", type=int)
         category = request.args.get("category")
-        q = _user_menu_q().order_by(MenuItem.category, MenuItem.name)
+        q = MenuItem.query.order_by(MenuItem.category, MenuItem.name)
         if restaurant_id:
             q = q.filter(MenuItem.restaurant_id == restaurant_id)
         if category:
@@ -313,20 +328,14 @@ def create_app():
     @app.route("/api/menu/categories")
     @auth_required
     def menu_categories():
-        rows = (
-            _user_menu_q()
-            .with_entities(MenuItem.category)
-            .distinct()
-            .order_by(MenuItem.category)
-            .all()
-        )
+        rows = db.session.query(MenuItem.category).distinct().order_by(MenuItem.category).all()
         return jsonify([r[0] for r in rows])
 
     @app.route("/api/menu/items")
     @auth_required
     def menu_item_names():
         category = request.args.get("category")
-        q = _user_menu_q().with_entities(MenuItem.name).distinct().order_by(MenuItem.name)
+        q = db.session.query(MenuItem.name).distinct().order_by(MenuItem.name)
         if category:
             q = q.filter(MenuItem.category == category)
         return jsonify([r[0] for r in q.all()])
@@ -335,7 +344,7 @@ def create_app():
     @auth_required
     def add_menu_item():
         data = request.get_json()
-        _get_user_restaurant_or_404(int(data["restaurant_id"]))
+        _get_restaurant_or_404(int(data["restaurant_id"]))
         collected = data.get("collected_date")
         mi = MenuItem(
             restaurant_id=data["restaurant_id"],
@@ -355,7 +364,7 @@ def create_app():
     @auth_required
     def update_menu_item(mid):
         """Update a menu item's price. Logs the change to price_history."""
-        mi = _get_user_menu_item_or_404(mid)
+        mi = _get_menu_item_or_404(mid)
         data = request.get_json()
         new_price = int(data["price"])
         changed_by = data.get("collected_by", "")
@@ -390,7 +399,7 @@ def create_app():
     @app.route("/api/menu/<int:mid>", methods=["DELETE"])
     @auth_required
     def delete_menu_item(mid):
-        mi = _get_user_menu_item_or_404(mid)
+        mi = _get_menu_item_or_404(mid)
         db.session.delete(mi)
         db.session.commit()
         return jsonify({"deleted": mid})
@@ -399,7 +408,7 @@ def create_app():
     @auth_required
     def delete_all_menu_items(rid):
         """Delete ALL menu items for a restaurant."""
-        _get_user_restaurant_or_404(rid)
+        _get_restaurant_or_404(rid)
         count = MenuItem.query.filter_by(restaurant_id=rid).delete()
         db.session.commit()
         return jsonify({"deleted": count, "restaurant_id": rid})
@@ -411,12 +420,9 @@ def create_app():
         items = request.get_json()
         if not isinstance(items, list):
             return jsonify({"error": "Expected a JSON array"}), 400
-        user_rest_ids = {r.id for r in _user_restaurant_q().all()}
         added = 0
         for data in items:
             rid = int(data["restaurant_id"])
-            if rid not in user_rest_ids:
-                continue
             collected = data.get("collected_date")
             mi = MenuItem(
                 restaurant_id=rid,
@@ -450,7 +456,7 @@ def create_app():
             reader = csv.DictReader(io.TextIOWrapper(f.stream, encoding="utf-8-sig"))
 
         # Build name→id lookup — scoped to this user's restaurants only
-        rest_map = {r.name.lower(): r.id for r in _user_restaurant_q().all()}
+        rest_map = {r.name.lower(): r.id for r in _all_restaurants().all()}
 
         added = 0
         skipped = []
@@ -505,7 +511,7 @@ def create_app():
 
         # Verify the restaurant belongs to the current user
         if restaurant_id:
-            _get_user_restaurant_or_404(restaurant_id)
+            _get_restaurant_or_404(restaurant_id)
 
         # Collect all files into a list for batch processing
         files_list = []
@@ -567,21 +573,21 @@ def create_app():
             return jsonify({"error": "Provide ?dish= parameter"}), 400
 
         # Try exact match first
-        q = _user_menu_q().filter(MenuItem.name_normalized == dish.lower())
+        q = MenuItem.query.filter(MenuItem.name_normalized == dish.lower())
         if category:
             q = q.filter(MenuItem.category == category)
         items = q.order_by(MenuItem.price).all()
 
         # Fall back to contains match
         if not items:
-            q = _user_menu_q().filter(MenuItem.name_normalized.contains(dish.lower()))
+            q = MenuItem.query.filter(MenuItem.name_normalized.contains(dish.lower()))
             if category:
                 q = q.filter(MenuItem.category == category)
             items = q.order_by(MenuItem.price).all()
 
         # Fall back to fuzzy match across all items
         if not items:
-            all_q = _user_menu_q()
+            all_q = MenuItem.query
             if category:
                 all_q = all_q.filter(MenuItem.category == category)
             all_items = all_q.all()
@@ -590,7 +596,7 @@ def create_app():
                     items.append(m)
             items.sort(key=lambda m: m.price)
 
-        total_restaurants = _user_restaurant_q().count()
+        total_restaurants = _all_restaurants().count()
         prices = [m.price for m in items]
         avg_price = round(sum(prices) / len(prices)) if prices else 0
 
@@ -639,10 +645,9 @@ def create_app():
         if not comp_ids:
             return jsonify({"error": "No valid competitor IDs"}), 400
 
-        base_rest = _get_user_restaurant_or_404(base_id)
-        comp_rests = _user_restaurant_q().filter(Restaurant.id.in_(comp_ids)).all()
+        base_rest = _get_restaurant_or_404(base_id)
+        comp_rests = Restaurant.query.filter(Restaurant.id.in_(comp_ids)).all()
         comp_map = {r.id: r for r in comp_rests}
-        comp_ids = list(comp_map.keys())  # filter to user-owned only
 
         # Load menu items (scoped to user via restaurant ownership)
         base_q = MenuItem.query.filter_by(restaurant_id=base_id)
@@ -826,13 +831,13 @@ def create_app():
     @auth_required
     def menu_coverage():
         """How many restaurants have menu data entered."""
-        total = _user_restaurant_q().count()
+        total = _all_restaurants().count()
         with_menu = (
-            _user_menu_q()
+            MenuItem.query
             .with_entities(func.count(func.distinct(MenuItem.restaurant_id)))
             .scalar()
         ) or 0
-        items_count = _user_menu_q().count()
+        items_count = MenuItem.query.count()
         return jsonify({
             "total_restaurants": total,
             "restaurants_with_menu": with_menu,
@@ -850,15 +855,9 @@ def create_app():
     def price_history():
         limit = request.args.get("limit", 50, type=int)
         dish = request.args.get("dish", "").strip()
-        q = (
-            PriceHistory.query
-            .join(MenuItem, MenuItem.id == PriceHistory.menu_item_id)
-            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
-            .filter(Restaurant.user_id == g.user_id)
-            .order_by(PriceHistory.changed_at.desc())
-        )
+        q = PriceHistory.query.order_by(PriceHistory.changed_at.desc())
         if dish:
-            q = q.filter(MenuItem.name_normalized == dish.lower())
+            q = q.join(MenuItem).filter(MenuItem.name_normalized == dish.lower())
         return jsonify([h.to_dict() for h in q.limit(limit).all()])
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -877,7 +876,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
-            .filter(Restaurant.user_id == g.user_id)
+
             .group_by(Restaurant.price_segment)
             .all()
         )
@@ -899,7 +898,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
-            .filter(Restaurant.user_id == g.user_id)
+
             .group_by(Restaurant.cuisine)
             .order_by(func.avg(MenuItem.price).desc())
             .all()
@@ -922,7 +921,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
-            .filter(Restaurant.user_id == g.user_id)
+
             .group_by(Restaurant.district)
             .order_by(func.count(func.distinct(Restaurant.id)).desc())
             .all()
@@ -949,7 +948,7 @@ def create_app():
                 func.avg(MenuItem.price),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
-            .filter(Restaurant.user_id == g.user_id)
+
             .group_by(Restaurant.id)
             .order_by(func.count(MenuItem.id).desc())
             .all()
@@ -974,7 +973,7 @@ def create_app():
                 func.avg(MenuItem.price),
             )
             .join(MenuItem, MenuItem.restaurant_id == Restaurant.id)
-            .filter(Restaurant.user_id == g.user_id)
+
             .group_by(Restaurant.id, MenuItem.category)
             .order_by(Restaurant.name, MenuItem.category)
             .all()
@@ -994,6 +993,258 @@ def create_app():
             "restaurants": list(by_rest.values()),
             "categories": sorted(all_cats),
         })
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  USER PROFILE
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/auth/profile", methods=["PUT"])
+    @auth_required
+    def update_profile():
+        data = request.get_json() or {}
+        if "name" in data:
+            g.user.name = data["name"].strip()
+        if "company" in data:
+            g.user.company = data["company"].strip()
+        if "photo_url" in data:
+            photo = data["photo_url"]
+            if len(photo) > 500_000:
+                return jsonify({"error": "Photo too large (max 500KB)"}), 400
+            g.user.photo_url = photo
+        db.session.commit()
+        return jsonify(g.user.to_dict())
+
+    @app.route("/api/auth/password", methods=["PUT"])
+    @auth_required
+    def change_password():
+        data = request.get_json() or {}
+        current = data.get("current_password", "")
+        new_pw = data.get("new_password", "")
+        if not g.user.check_password(current):
+            return jsonify({"error": "Current password is incorrect"}), 400
+        if len(new_pw) < 6:
+            return jsonify({"error": "New password must be at least 6 characters"}), 400
+        g.user.set_password(new_pw)
+        db.session.commit()
+        return jsonify({"message": "Password updated"})
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  MENU ENGINEERING MATRIX
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/analytics/menu-engineering")
+    @auth_required
+    def menu_engineering():
+        """Menu engineering matrix (Stars / Plowhorses / Puzzles / Dogs).
+
+        For a given restaurant, classifies each dish based on:
+        - Popularity: how many other restaurants carry a similar dish
+        - Profitability: price vs market average for that dish
+
+        Query params:
+          restaurant_id: int — the restaurant to analyze
+        """
+        rid = request.args.get("restaurant_id", type=int)
+        if not rid:
+            return jsonify({"error": "Provide ?restaurant_id="}), 400
+        rest = Restaurant.query.get_or_404(rid)
+        my_items = MenuItem.query.filter_by(restaurant_id=rid).all()
+        if not my_items:
+            return jsonify({"restaurant": rest.name, "items": [], "summary": {}})
+
+        all_items = MenuItem.query.filter(MenuItem.restaurant_id != rid).all()
+
+        results = []
+        for mi in my_items:
+            matches = [m for m in all_items if _dish_similarity(mi.name, m.name) >= _MATCH_THRESHOLD]
+            market_prices = [m.price for m in matches]
+            market_avg = round(sum(market_prices) / len(market_prices)) if market_prices else mi.price
+            popularity = len(set(m.restaurant_id for m in matches))
+            price_vs_market = round((mi.price - market_avg) / market_avg * 100, 1) if market_avg else 0
+
+            margin_pct = None
+            if mi.food_cost and mi.price:
+                margin_pct = round((mi.price - mi.food_cost) / mi.price * 100, 1)
+
+            results.append({
+                "id": mi.id,
+                "name": mi.name,
+                "category": mi.category,
+                "price": mi.price,
+                "food_cost": mi.food_cost,
+                "margin_pct": margin_pct,
+                "market_avg": market_avg,
+                "price_vs_market": price_vs_market,
+                "popularity": popularity,
+                "matched_restaurants": list(set(m.restaurant.name for m in matches if m.restaurant))[:5],
+            })
+
+        # Classify: median splits
+        pops = [r["popularity"] for r in results]
+        med_pop = sorted(pops)[len(pops) // 2] if pops else 0
+        margins = [r["price_vs_market"] for r in results]
+        med_margin = sorted(margins)[len(margins) // 2] if margins else 0
+
+        stars, plowhorses, puzzles, dogs = [], [], [], []
+        for r in results:
+            hi_pop = r["popularity"] >= med_pop
+            hi_profit = r["price_vs_market"] >= med_margin
+            if hi_pop and hi_profit:
+                r["quadrant"] = "star"
+                stars.append(r)
+            elif hi_pop and not hi_profit:
+                r["quadrant"] = "plowhorse"
+                plowhorses.append(r)
+            elif not hi_pop and hi_profit:
+                r["quadrant"] = "puzzle"
+                puzzles.append(r)
+            else:
+                r["quadrant"] = "dog"
+                dogs.append(r)
+
+        return jsonify({
+            "restaurant": rest.name,
+            "items": results,
+            "summary": {
+                "stars": len(stars),
+                "plowhorses": len(plowhorses),
+                "puzzles": len(puzzles),
+                "dogs": len(dogs),
+                "total": len(results),
+                "avg_price": round(sum(r["price"] for r in results) / len(results)) if results else 0,
+                "avg_market": round(sum(r["market_avg"] for r in results) / len(results)) if results else 0,
+            },
+        })
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  PRICE RECOMMENDATIONS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/analytics/price-recommendations")
+    @auth_required
+    def price_recommendations():
+        """Smart pricing suggestions for a restaurant.
+
+        Identifies items priced significantly below or above market and
+        suggests adjustments with estimated revenue impact.
+        """
+        rid = request.args.get("restaurant_id", type=int)
+        if not rid:
+            return jsonify({"error": "Provide ?restaurant_id="}), 400
+        rest = Restaurant.query.get_or_404(rid)
+        my_items = MenuItem.query.filter_by(restaurant_id=rid).all()
+        all_items = MenuItem.query.filter(MenuItem.restaurant_id != rid).all()
+
+        recommendations = []
+        for mi in my_items:
+            matches = [m for m in all_items if _dish_similarity(mi.name, m.name) >= _MATCH_THRESHOLD]
+            if not matches:
+                continue
+            market_prices = [m.price for m in matches]
+            market_avg = round(sum(market_prices) / len(market_prices))
+            market_max = max(market_prices)
+            diff_pct = round((mi.price - market_avg) / market_avg * 100, 1)
+
+            if abs(diff_pct) < 5:
+                continue
+
+            if diff_pct < -10:
+                suggested = round(market_avg * 0.95)
+                action = "raise"
+                reason = f"Priced {abs(diff_pct)}% below market average"
+            elif diff_pct > 20:
+                suggested = round(market_avg * 1.10)
+                action = "lower"
+                reason = f"Priced {diff_pct}% above market average — risk of losing customers"
+            elif diff_pct < -5:
+                suggested = round(market_avg * 0.97)
+                action = "raise"
+                reason = f"Slightly below market — room to increase"
+            elif diff_pct > 10:
+                suggested = mi.price
+                action = "monitor"
+                reason = f"Premium pricing ({diff_pct}% above avg) — ensure quality justifies it"
+            else:
+                continue
+
+            revenue_impact = suggested - mi.price
+
+            recommendations.append({
+                "dish": mi.name,
+                "category": mi.category,
+                "current_price": mi.price,
+                "market_avg": market_avg,
+                "market_max": market_max,
+                "diff_pct": diff_pct,
+                "suggested_price": suggested,
+                "action": action,
+                "reason": reason,
+                "revenue_impact_per_sale": revenue_impact,
+                "competitors_count": len(set(m.restaurant_id for m in matches)),
+            })
+
+        recommendations.sort(key=lambda x: abs(x["revenue_impact_per_sale"]), reverse=True)
+
+        total_potential = sum(r["revenue_impact_per_sale"] for r in recommendations if r["action"] == "raise")
+
+        return jsonify({
+            "restaurant": rest.name,
+            "recommendations": recommendations,
+            "summary": {
+                "total_items_analyzed": len(my_items),
+                "items_with_suggestions": len(recommendations),
+                "raise_count": sum(1 for r in recommendations if r["action"] == "raise"),
+                "lower_count": sum(1 for r in recommendations if r["action"] == "lower"),
+                "monitor_count": sum(1 for r in recommendations if r["action"] == "monitor"),
+                "total_revenue_opportunity": total_potential,
+            },
+        })
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  CSV EXPORT
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/export/menu-data")
+    @auth_required
+    def export_menu_data():
+        """Export all menu data as CSV for spreadsheet analysis."""
+        rid = request.args.get("restaurant_id", type=int)
+        q = MenuItem.query.join(Restaurant)
+        if rid:
+            q = q.filter(MenuItem.restaurant_id == rid)
+        items = q.order_by(Restaurant.name, MenuItem.category, MenuItem.name).all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "Restaurant", "Segment", "District", "Category", "Dish Name",
+            "Price (UZS)", "Food Cost (UZS)", "Margin %", "Description",
+            "Notes", "Collected By", "Collected Date", "Last Updated",
+        ])
+        for m in items:
+            margin = round((m.price - m.food_cost) / m.price * 100, 1) if m.food_cost and m.price else ""
+            writer.writerow([
+                m.restaurant.name if m.restaurant else "",
+                m.restaurant.price_segment if m.restaurant else "",
+                m.restaurant.district if m.restaurant else "",
+                m.category,
+                m.name,
+                m.price,
+                m.food_cost or "",
+                margin,
+                m.description or "",
+                m.notes or "",
+                m.collected_by or "",
+                m.collected_date.isoformat() if m.collected_date else "",
+                m.updated_at.isoformat() if m.updated_at else "",
+            ])
+
+        from flask import Response
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=menu_data.csv"},
+        )
 
     return app
 

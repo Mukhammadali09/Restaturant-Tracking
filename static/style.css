@@ -182,3 +182,28 @@ footer{text-align:center;padding:1.5rem 0;color:var(--text-muted);font-size:.75r
   .competitor-picker{gap:.35rem}
   .competitor-picker label{padding:.3rem .5rem;font-size:.75rem}
 }
+
+/* === Profile button === */
+.user-name-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;color:var(--text-muted);cursor:pointer;font-size:.8rem;transition:all .2s}
+.user-name-btn:hover{border-color:var(--accent);color:var(--text)}
+
+/* === Modal === */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:1rem}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.modal-header h2{font-size:1.2rem}
+.close-btn{background:none;border:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer;padding:0 .3rem}
+.close-btn:hover{color:var(--text)}
+
+/* === Avatar === */
+.profile-avatar{display:flex;justify-content:center;margin-bottom:1rem}
+.avatar-initials{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--gold));display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;color:#fff}
+.avatar-img{width:64px;height:64px;border-radius:50%;object-fit:cover}
+
+/* === Buttons === */
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+
+/* === Utility colors for text === */
+.gold{color:var(--gold)}
+.blue{color:var(--blue)}
+.small-text{font-size:.78rem;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

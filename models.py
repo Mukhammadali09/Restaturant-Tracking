@@ -14,9 +14,11 @@ class User(db.Model):
     password_hash = db.Column(db.String(256), nullable=False)
     name = db.Column(db.String(200), nullable=False)
     company = db.Column(db.String(200), default="")
+    role = db.Column(db.String(20), default="manager")  # admin, manager, analyst, viewer
+    photo_url = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    restaurants = db.relationship("Restaurant", backref="owner", lazy=True, cascade="all, delete-orphan")
+    restaurants = db.relationship("Restaurant", backref="created_by_user", lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -30,6 +32,8 @@ class User(db.Model):
             "email": self.email,
             "name": self.name,
             "company": self.company,
+            "role": self.role,
+            "photo_url": self.photo_url or "",
             "created_at": self.created_at.isoformat(),
         }
 
@@ -38,7 +42,7 @@ class Restaurant(db.Model):
     __tablename__ = "restaurants"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     name = db.Column(db.String(200), nullable=False)
     cuisine = db.Column(db.String(100), nullable=False)
     address = db.Column(db.String(300), nullable=False)
@@ -54,7 +58,6 @@ class Restaurant(db.Model):
     def to_dict(self):
         return {
             "id": self.id,
-            "user_id": self.user_id,
             "name": self.name,
             "cuisine": self.cuisine,
             "address": self.address,
@@ -76,7 +79,9 @@ class MenuItem(db.Model):
     name = db.Column(db.String(200), nullable=False)
     name_normalized = db.Column(db.String(200), nullable=False)
     price = db.Column(db.Integer, nullable=False)
+    food_cost = db.Column(db.Integer, nullable=True)
     description = db.Column(db.Text)
+    notes = db.Column(db.Text, default="")
     collected_by = db.Column(db.String(100), default="")
     collected_date = db.Column(db.Date)
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -92,7 +97,10 @@ class MenuItem(db.Model):
             "category": self.category,
             "name": self.name,
             "price": self.price,
+            "food_cost": self.food_cost,
+            "margin_pct": round((self.price - self.food_cost) / self.price * 100, 1) if self.food_cost and self.price else None,
             "description": self.description,
+            "notes": self.notes or "",
             "collected_by": self.collected_by,
             "collected_date": self.collected_date.isoformat() if self.collected_date else None,
             "updated_at": self.updated_at.isoformat(),
