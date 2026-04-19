@@ -8,10 +8,42 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
+
+<!-- ═══ AUTH SCREEN ═══ -->
+<div id="authScreen" class="auth-screen hidden">
+  <div class="auth-card">
+    <h1 class="auth-title">Restaurant Market Tracker</h1>
+    <p class="auth-sub">Competitive menu intelligence for restaurant operators</p>
+    <div class="auth-switch">
+      <button type="button" data-mode="login" class="active">Sign in</button>
+      <button type="button" data-mode="register">Create account</button>
+    </div>
+    <form id="loginForm">
+      <label>Email<input id="liEmail" type="email" required autocomplete="email" /></label>
+      <label>Password<input id="liPassword" type="password" required autocomplete="current-password" /></label>
+      <button type="submit" class="auth-submit">Sign in</button>
+    </form>
+    <form id="registerForm" class="hidden">
+      <label>Full name<input id="riName" required autocomplete="name" /></label>
+      <label>Company (optional)<input id="riCompany" autocomplete="organization" /></label>
+      <label>Email<input id="riEmail" type="email" required autocomplete="email" /></label>
+      <label>Password <span class="hint">(min 6 chars)</span><input id="riPassword" type="password" required minlength="6" autocomplete="new-password" /></label>
+      <button type="submit" class="auth-submit">Create account</button>
+    </form>
+    <p id="authError" class="auth-error"></p>
+  </div>
+</div>
+
+<!-- ═══ APP SHELL ═══ -->
+<div id="appShell" class="hidden">
   <header>
     <div class="header-top">
       <h1 data-i18n="title">Tashkent Restaurant Market Tracker</h1>
-      <button id="langBtn" class="lang-btn" onclick="toggleLang()">RU</button>
+      <div class="header-actions">
+        <span id="userDisplayName" class="user-name"></span>
+        <button id="logoutBtn" class="lang-btn" type="button">Logout</button>
+        <button id="langBtn" class="lang-btn" onclick="toggleLang()">RU</button>
+      </div>
     </div>
     <p class="subtitle" data-i18n="subtitle">Competitive intelligence for restaurant holdings &mdash; real data only</p>
     <nav class="tabs">
@@ -372,6 +404,7 @@ Basilic,Salads,Caesar Salad,89000,Classic caesar,Dilnoza</pre>
   </main>
 
   <footer><p data-i18n="footer">Tashkent Restaurant Market Tracker &mdash; All prices are manually collected from real menus</p></footer>
+</div><!-- /appShell -->
   <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>

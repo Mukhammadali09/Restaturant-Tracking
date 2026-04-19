@@ -1,14 +1,44 @@
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import check_password_hash, generate_password_hash
 
 db = SQLAlchemy()
+
+
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(200), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    company = db.Column(db.String(200), default="")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    restaurants = db.relationship("Restaurant", backref="owner", lazy=True, cascade="all, delete-orphan")
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "company": self.company,
+            "created_at": self.created_at.isoformat(),
+        }
 
 
 class Restaurant(db.Model):
     __tablename__ = "restaurants"
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     name = db.Column(db.String(200), nullable=False)
     cuisine = db.Column(db.String(100), nullable=False)
     address = db.Column(db.String(300), nullable=False)
@@ -24,6 +54,7 @@ class Restaurant(db.Model):
     def to_dict(self):
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "name": self.name,
             "cuisine": self.cuisine,
             "address": self.address,
@@ -37,7 +68,6 @@ class Restaurant(db.Model):
 
 
 class MenuItem(db.Model):
-    """Menu position with price — ONLY from real manual data entry."""
     __tablename__ = "menu_items"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -70,7 +100,6 @@ class MenuItem(db.Model):
 
 
 class PriceHistory(db.Model):
-    """Logs every price change so we can track trends over time."""
     __tablename__ = "price_history"
 
     id = db.Column(db.Integer, primary_key=True)

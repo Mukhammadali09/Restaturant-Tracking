@@ -13,9 +13,28 @@ header{padding:1.5rem 0 0}
 .header-top h1{font-size:1.8rem;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .subtitle{color:var(--text-muted);font-size:.9rem;margin-top:.15rem;text-align:center}
 
-/* === Language Toggle === */
-.lang-btn{position:absolute;right:0;top:50%;transform:translateY(-50%);background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.35rem .8rem;font-size:.82rem;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.05em}
+/* === Language Toggle & Header actions === */
+.header-actions{position:absolute;right:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:.6rem}
+.user-name{font-size:.8rem;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lang-btn{position:relative;right:auto;top:auto;transform:none;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.35rem .8rem;font-size:.82rem;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.05em}
 .lang-btn:hover{border-color:var(--accent);background:var(--accent);color:#fff}
+
+/* === Auth Screen === */
+.hidden{display:none !important}
+.auth-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:1000}
+.auth-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2.5rem 2rem;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.4)}
+.auth-title{font-size:1.6rem;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:.3rem}
+.auth-sub{color:var(--text-muted);font-size:.85rem;text-align:center;margin-bottom:1.5rem}
+.auth-switch{display:flex;gap:.4rem;background:var(--surface2);padding:.3rem;border-radius:8px;margin-bottom:1.5rem}
+.auth-switch button{flex:1;background:transparent;color:var(--text-muted);border:none;padding:.5rem;border-radius:6px;font-size:.85rem;cursor:pointer;transition:all .2s}
+.auth-switch button.active{background:var(--accent);color:#fff}
+.auth-card form{display:flex;flex-direction:column;gap:.85rem}
+.auth-card label{display:flex;flex-direction:column;gap:.3rem;font-size:.8rem;color:var(--text-muted)}
+.auth-card input{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:.6rem .8rem;color:var(--text);font-size:.9rem}
+.auth-card input:focus{outline:none;border-color:var(--accent)}
+.auth-submit{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:.7rem;font-size:.9rem;font-weight:600;cursor:pointer;margin-top:.5rem;transition:background .2s}
+.auth-submit:hover{background:var(--accent-light)}
+.auth-error{color:var(--red);font-size:.82rem;text-align:center;margin-top:.8rem;min-height:1.2em}
 
 /* === Tabs === */
 .tabs{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin:1.2rem 0 .5rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}

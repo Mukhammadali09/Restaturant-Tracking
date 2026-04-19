@@ -6,14 +6,15 @@ import re
 from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from sqlalchemy import func
 
 import config
-from models import MenuItem, PriceHistory, Restaurant, db
+from auth import auth_required, generate_token
+from models import MenuItem, PriceHistory, Restaurant, User, db
 from ocr import parse_menu_image
-from seed import seed_database
+from seed import seed_database_for_user
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -164,7 +165,6 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        seed_database()
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  STATIC
@@ -175,23 +175,99 @@ def create_app():
         return app.send_static_file("index.html")
 
     # ═══════════════════════════════════════════════════════════════════════════
+    #  AUTH
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @app.route("/api/auth/register", methods=["POST"])
+    def register():
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
+        name = (data.get("name") or "").strip()
+        company = (data.get("company") or "").strip()
+
+        if not email or "@" not in email:
+            return jsonify({"error": "Valid email required"}), 400
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        if not name:
+            return jsonify({"error": "Name required"}), 400
+        if User.query.filter_by(email=email).first():
+            return jsonify({"error": "Email already registered"}), 409
+
+        user = User(email=email, name=name, company=company)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+
+        # Seed starter restaurants for the new user
+        seed_database_for_user(user.id)
+
+        token = generate_token(user.id)
+        return jsonify({"token": token, "user": user.to_dict()}), 201
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def login():
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
+        user = User.query.filter_by(email=email).first()
+        if not user or not user.check_password(password):
+            return jsonify({"error": "Invalid email or password"}), 401
+        token = generate_token(user.id)
+        return jsonify({"token": token, "user": user.to_dict()})
+
+    @app.route("/api/auth/me")
+    @auth_required
+    def me():
+        return jsonify(g.user.to_dict())
+
+    # ═══════════════════════════════════════════════════════════════════════════
     #  RESTAURANTS
     # ═══════════════════════════════════════════════════════════════════════════
 
+    def _user_restaurant_q():
+        """Base query filtering restaurants to the current user."""
+        return Restaurant.query.filter_by(user_id=g.user_id)
+
+    def _get_user_restaurant_or_404(rid):
+        r = Restaurant.query.filter_by(id=rid, user_id=g.user_id).first()
+        if not r:
+            from flask import abort
+            abort(404)
+        return r
+
+    def _get_user_menu_item_or_404(mid):
+        """Load a menu item scoped to the current user's restaurants."""
+        mi = (
+            MenuItem.query
+            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+            .filter(MenuItem.id == mid, Restaurant.user_id == g.user_id)
+            .first()
+        )
+        if not mi:
+            from flask import abort
+            abort(404)
+        return mi
+
     @app.route("/api/restaurants")
+    @auth_required
     def list_restaurants():
-        restaurants = Restaurant.query.order_by(Restaurant.name).all()
+        restaurants = _user_restaurant_q().order_by(Restaurant.name).all()
         return jsonify([r.to_dict() for r in restaurants])
 
     @app.route("/api/restaurants/<int:rid>")
+    @auth_required
     def get_restaurant(rid):
-        r = Restaurant.query.get_or_404(rid)
+        r = _get_user_restaurant_or_404(rid)
         return jsonify(r.to_dict())
 
     @app.route("/api/restaurants", methods=["POST"])
+    @auth_required
     def add_restaurant():
         data = request.get_json()
         r = Restaurant(
+            user_id=g.user_id,
             name=data["name"], cuisine=data["cuisine"], address=data["address"],
             district=data.get("district", "Tashkent"), phone=data.get("phone"),
             price_segment=data.get("price_segment", "Premium"),
@@ -203,8 +279,9 @@ def create_app():
         return jsonify(r.to_dict()), 201
 
     @app.route("/api/restaurants/<int:rid>", methods=["DELETE"])
+    @auth_required
     def delete_restaurant(rid):
-        r = Restaurant.query.get_or_404(rid)
+        r = _get_user_restaurant_or_404(rid)
         db.session.delete(r)
         db.session.commit()
         return jsonify({"deleted": rid})
@@ -213,33 +290,52 @@ def create_app():
     #  MENU MANAGEMENT (core of the tool)
     # ═══════════════════════════════════════════════════════════════════════════
 
+    def _user_menu_q():
+        """Base menu query scoped to current user's restaurants."""
+        return (
+            MenuItem.query
+            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+            .filter(Restaurant.user_id == g.user_id)
+        )
+
     @app.route("/api/menu")
+    @auth_required
     def list_menu():
         restaurant_id = request.args.get("restaurant_id", type=int)
         category = request.args.get("category")
-        q = MenuItem.query.order_by(MenuItem.category, MenuItem.name)
+        q = _user_menu_q().order_by(MenuItem.category, MenuItem.name)
         if restaurant_id:
-            q = q.filter_by(restaurant_id=restaurant_id)
+            q = q.filter(MenuItem.restaurant_id == restaurant_id)
         if category:
-            q = q.filter_by(category=category)
+            q = q.filter(MenuItem.category == category)
         return jsonify([m.to_dict() for m in q.all()])
 
     @app.route("/api/menu/categories")
+    @auth_required
     def menu_categories():
-        rows = db.session.query(MenuItem.category).distinct().order_by(MenuItem.category).all()
+        rows = (
+            _user_menu_q()
+            .with_entities(MenuItem.category)
+            .distinct()
+            .order_by(MenuItem.category)
+            .all()
+        )
         return jsonify([r[0] for r in rows])
 
     @app.route("/api/menu/items")
+    @auth_required
     def menu_item_names():
         category = request.args.get("category")
-        q = db.session.query(MenuItem.name).distinct().order_by(MenuItem.name)
+        q = _user_menu_q().with_entities(MenuItem.name).distinct().order_by(MenuItem.name)
         if category:
             q = q.filter(MenuItem.category == category)
         return jsonify([r[0] for r in q.all()])
 
     @app.route("/api/menu", methods=["POST"])
+    @auth_required
     def add_menu_item():
         data = request.get_json()
+        _get_user_restaurant_or_404(int(data["restaurant_id"]))
         collected = data.get("collected_date")
         mi = MenuItem(
             restaurant_id=data["restaurant_id"],
@@ -256,9 +352,10 @@ def create_app():
         return jsonify(mi.to_dict()), 201
 
     @app.route("/api/menu/<int:mid>", methods=["PUT"])
+    @auth_required
     def update_menu_item(mid):
         """Update a menu item's price. Logs the change to price_history."""
-        mi = MenuItem.query.get_or_404(mid)
+        mi = _get_user_menu_item_or_404(mid)
         data = request.get_json()
         new_price = int(data["price"])
         changed_by = data.get("collected_by", "")
@@ -291,30 +388,38 @@ def create_app():
         return jsonify(mi.to_dict())
 
     @app.route("/api/menu/<int:mid>", methods=["DELETE"])
+    @auth_required
     def delete_menu_item(mid):
-        mi = MenuItem.query.get_or_404(mid)
+        mi = _get_user_menu_item_or_404(mid)
         db.session.delete(mi)
         db.session.commit()
         return jsonify({"deleted": mid})
 
     @app.route("/api/menu/restaurant/<int:rid>", methods=["DELETE"])
+    @auth_required
     def delete_all_menu_items(rid):
         """Delete ALL menu items for a restaurant."""
+        _get_user_restaurant_or_404(rid)
         count = MenuItem.query.filter_by(restaurant_id=rid).delete()
         db.session.commit()
         return jsonify({"deleted": count, "restaurant_id": rid})
 
     @app.route("/api/menu/bulk", methods=["POST"])
+    @auth_required
     def bulk_add_menu():
         """Add multiple menu items at once. Expects JSON array of items."""
         items = request.get_json()
         if not isinstance(items, list):
             return jsonify({"error": "Expected a JSON array"}), 400
+        user_rest_ids = {r.id for r in _user_restaurant_q().all()}
         added = 0
         for data in items:
+            rid = int(data["restaurant_id"])
+            if rid not in user_rest_ids:
+                continue
             collected = data.get("collected_date")
             mi = MenuItem(
-                restaurant_id=data["restaurant_id"],
+                restaurant_id=rid,
                 category=data.get("category", "Uncategorized"),
                 name=data["name"],
                 name_normalized=data["name"].lower().strip(),
@@ -329,6 +434,7 @@ def create_app():
         return jsonify({"added": added})
 
     @app.route("/api/menu/csv", methods=["POST"])
+    @auth_required
     def csv_upload_menu():
         """
         Upload menu data via CSV. Expected columns:
@@ -343,8 +449,8 @@ def create_app():
             f = request.files["file"]
             reader = csv.DictReader(io.TextIOWrapper(f.stream, encoding="utf-8-sig"))
 
-        # Build name→id lookup
-        rest_map = {r.name.lower(): r.id for r in Restaurant.query.all()}
+        # Build name→id lookup — scoped to this user's restaurants only
+        rest_map = {r.name.lower(): r.id for r in _user_restaurant_q().all()}
 
         added = 0
         skipped = []
@@ -381,6 +487,7 @@ def create_app():
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/api/menu/ocr", methods=["POST"])
+    @auth_required
     def ocr_menu_upload():
         """Upload one or more menu photos/PDFs.
 
@@ -395,6 +502,10 @@ def create_app():
         ocr_lang = request.form.get("language", "rus")
         restaurant_id = request.form.get("restaurant_id", type=int)
         collected_by = request.form.get("collected_by", "OCR Upload")
+
+        # Verify the restaurant belongs to the current user
+        if restaurant_id:
+            _get_user_restaurant_or_404(restaurant_id)
 
         # Collect all files into a list for batch processing
         files_list = []
@@ -448,6 +559,7 @@ def create_app():
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/api/menu/compare")
+    @auth_required
     def compare_prices():
         dish = request.args.get("dish", "").strip()
         category = request.args.get("category", "").strip()
@@ -455,21 +567,21 @@ def create_app():
             return jsonify({"error": "Provide ?dish= parameter"}), 400
 
         # Try exact match first
-        q = MenuItem.query.filter(MenuItem.name_normalized == dish.lower())
+        q = _user_menu_q().filter(MenuItem.name_normalized == dish.lower())
         if category:
             q = q.filter(MenuItem.category == category)
         items = q.order_by(MenuItem.price).all()
 
         # Fall back to contains match
         if not items:
-            q = MenuItem.query.filter(MenuItem.name_normalized.contains(dish.lower()))
+            q = _user_menu_q().filter(MenuItem.name_normalized.contains(dish.lower()))
             if category:
                 q = q.filter(MenuItem.category == category)
             items = q.order_by(MenuItem.price).all()
 
         # Fall back to fuzzy match across all items
         if not items:
-            all_q = MenuItem.query
+            all_q = _user_menu_q()
             if category:
                 all_q = all_q.filter(MenuItem.category == category)
             all_items = all_q.all()
@@ -478,7 +590,7 @@ def create_app():
                     items.append(m)
             items.sort(key=lambda m: m.price)
 
-        total_restaurants = Restaurant.query.count()
+        total_restaurants = _user_restaurant_q().count()
         prices = [m.price for m in items]
         avg_price = round(sum(prices) / len(prices)) if prices else 0
 
@@ -505,6 +617,7 @@ def create_app():
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/api/menu/compare-restaurants")
+    @auth_required
     def compare_restaurants():
         """Compare a base restaurant against selected competitors.
 
@@ -526,11 +639,12 @@ def create_app():
         if not comp_ids:
             return jsonify({"error": "No valid competitor IDs"}), 400
 
-        base_rest = Restaurant.query.get_or_404(base_id)
-        comp_rests = Restaurant.query.filter(Restaurant.id.in_(comp_ids)).all()
+        base_rest = _get_user_restaurant_or_404(base_id)
+        comp_rests = _user_restaurant_q().filter(Restaurant.id.in_(comp_ids)).all()
         comp_map = {r.id: r for r in comp_rests}
+        comp_ids = list(comp_map.keys())  # filter to user-owned only
 
-        # Load menu items
+        # Load menu items (scoped to user via restaurant ownership)
         base_q = MenuItem.query.filter_by(restaurant_id=base_id)
         comp_q = MenuItem.query.filter(MenuItem.restaurant_id.in_(comp_ids))
         if cat_filter:
@@ -709,11 +823,16 @@ def create_app():
         })
 
     @app.route("/api/menu/coverage")
+    @auth_required
     def menu_coverage():
         """How many restaurants have menu data entered."""
-        total = Restaurant.query.count()
-        with_menu = db.session.query(func.count(func.distinct(MenuItem.restaurant_id))).scalar()
-        items_count = MenuItem.query.count()
+        total = _user_restaurant_q().count()
+        with_menu = (
+            _user_menu_q()
+            .with_entities(func.count(func.distinct(MenuItem.restaurant_id)))
+            .scalar()
+        ) or 0
+        items_count = _user_menu_q().count()
         return jsonify({
             "total_restaurants": total,
             "restaurants_with_menu": with_menu,
@@ -727,12 +846,19 @@ def create_app():
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/api/price-history")
+    @auth_required
     def price_history():
         limit = request.args.get("limit", 50, type=int)
         dish = request.args.get("dish", "").strip()
-        q = PriceHistory.query.order_by(PriceHistory.changed_at.desc())
+        q = (
+            PriceHistory.query
+            .join(MenuItem, MenuItem.id == PriceHistory.menu_item_id)
+            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+            .filter(Restaurant.user_id == g.user_id)
+            .order_by(PriceHistory.changed_at.desc())
+        )
         if dish:
-            q = q.join(MenuItem).filter(MenuItem.name_normalized == dish.lower())
+            q = q.filter(MenuItem.name_normalized == dish.lower())
         return jsonify([h.to_dict() for h in q.limit(limit).all()])
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -740,6 +866,7 @@ def create_app():
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/api/analytics/segments")
+    @auth_required
     def analytics_segments():
         """Menu-price-based segment analysis."""
         results = (
@@ -750,6 +877,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .filter(Restaurant.user_id == g.user_id)
             .group_by(Restaurant.price_segment)
             .all()
         )
@@ -761,6 +889,7 @@ def create_app():
         } for r in results])
 
     @app.route("/api/analytics/cuisines")
+    @auth_required
     def analytics_cuisines():
         results = (
             db.session.query(
@@ -770,6 +899,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .filter(Restaurant.user_id == g.user_id)
             .group_by(Restaurant.cuisine)
             .order_by(func.avg(MenuItem.price).desc())
             .all()
@@ -782,6 +912,7 @@ def create_app():
         } for r in results])
 
     @app.route("/api/analytics/districts")
+    @auth_required
     def analytics_districts():
         results = (
             db.session.query(
@@ -791,6 +922,7 @@ def create_app():
                 func.count(MenuItem.id),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .filter(Restaurant.user_id == g.user_id)
             .group_by(Restaurant.district)
             .order_by(func.count(func.distinct(Restaurant.id)).desc())
             .all()
@@ -803,6 +935,7 @@ def create_app():
         } for r in results])
 
     @app.route("/api/analytics/ranking")
+    @auth_required
     def analytics_ranking():
         """Rank restaurants by avg menu price and data completeness."""
         results = (
@@ -816,6 +949,7 @@ def create_app():
                 func.avg(MenuItem.price),
             )
             .outerjoin(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .filter(Restaurant.user_id == g.user_id)
             .group_by(Restaurant.id)
             .order_by(func.count(MenuItem.id).desc())
             .all()
@@ -828,6 +962,7 @@ def create_app():
         } for r in results])
 
     @app.route("/api/analytics/category-coverage")
+    @auth_required
     def analytics_category_coverage():
         """Which categories each restaurant covers — for heatmap view."""
         results = (
@@ -839,6 +974,7 @@ def create_app():
                 func.avg(MenuItem.price),
             )
             .join(MenuItem, MenuItem.restaurant_id == Restaurant.id)
+            .filter(Restaurant.user_id == g.user_id)
             .group_by(Restaurant.id, MenuItem.category)
             .order_by(Restaurant.name, MenuItem.category)
             .all()

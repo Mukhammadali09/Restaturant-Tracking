@@ -1,27 +1,129 @@
 const API = "";
 const COLORS = ["#6c63ff","#fbbf24","#34d399","#f87171","#60a5fa","#a78bfa","#fb923c","#38bdf8","#e879f9","#4ade80","#f472b6","#facc15"];
 const fmt = n => Number(n).toLocaleString("uz-UZ");
-const fetchJSON = url => fetch(API + url).then(r => r.json());
-const postJSON = (url, body) => fetch(API + url, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r => r.json());
-const putJSON = (url, body) => fetch(API + url, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r => r.json());
-const deleteJSON = url => fetch(API + url, {method:"DELETE"}).then(r => r.json());
+
+// ─── Auth ────────────────────────────────────────────────────────────────
+const TOKEN_KEY = "rt_token";
+const USER_KEY  = "rt_user";
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setAuth(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+function currentUser() {
+  try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); }
+  catch { return null; }
+}
+function authHeaders(extra) {
+  const h = extra || {};
+  const t = getToken();
+  if (t) h["Authorization"] = "Bearer " + t;
+  return h;
+}
+async function handleAuthResponse(r) {
+  if (r.status === 401) {
+    clearAuth();
+    showAuthScreen();
+    throw new Error("unauthorized");
+  }
+  return r;
+}
+
+const fetchJSON = url => fetch(API + url, {headers: authHeaders()}).then(handleAuthResponse).then(r => r.json());
+const postJSON = (url, body) => fetch(API + url, {method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify(body)}).then(handleAuthResponse).then(r => r.json());
+const putJSON = (url, body) => fetch(API + url, {method:"PUT",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify(body)}).then(handleAuthResponse).then(r => r.json());
+const deleteJSON = url => fetch(API + url, {method:"DELETE", headers:authHeaders()}).then(handleAuthResponse).then(r => r.json());
 
 let restaurants = [];
 let charts = {};
+
+function showAuthScreen() {
+  document.getElementById("authScreen").classList.remove("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+}
+function showAppShell() {
+  document.getElementById("authScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+  const u = currentUser();
+  const nameEl = document.getElementById("userDisplayName");
+  if (nameEl && u) nameEl.textContent = u.name + (u.company ? " — " + u.company : "");
+}
+
+async function submitLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById("liEmail").value.trim();
+  const password = document.getElementById("liPassword").value;
+  const errEl = document.getElementById("authError");
+  errEl.textContent = "";
+  const r = await fetch(API + "/api/auth/login", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({email, password}),
+  });
+  const data = await r.json();
+  if (!r.ok) { errEl.textContent = data.error || "Login failed"; return; }
+  setAuth(data.token, data.user);
+  await bootApp();
+}
+
+async function submitRegister(e) {
+  e.preventDefault();
+  const name = document.getElementById("riName").value.trim();
+  const company = document.getElementById("riCompany").value.trim();
+  const email = document.getElementById("riEmail").value.trim();
+  const password = document.getElementById("riPassword").value;
+  const errEl = document.getElementById("authError");
+  errEl.textContent = "";
+  const r = await fetch(API + "/api/auth/register", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name, company, email, password}),
+  });
+  const data = await r.json();
+  if (!r.ok) { errEl.textContent = data.error || "Registration failed"; return; }
+  setAuth(data.token, data.user);
+  await bootApp();
+}
+
+function switchAuthMode(mode) {
+  document.getElementById("loginForm").classList.toggle("hidden", mode !== "login");
+  document.getElementById("registerForm").classList.toggle("hidden", mode !== "register");
+  document.getElementById("authError").textContent = "";
+  document.querySelectorAll(".auth-switch button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+}
+
+function logout() {
+  clearAuth();
+  location.reload();
+}
+
+async function bootApp() {
+  try {
+    restaurants = await fetchJSON("/api/restaurants");
+  } catch (e) { return; }  // handleAuthResponse already kicked us to login
+  showAppShell();
+  applyLanguage();
+  setupTabs();
+  populateAllSelects();
+  loadMenuManagement();
+  document.getElementById("mfDate").valueAsDate = new Date();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  BOOTSTRAP
 // ═══════════════════════════════════════════════════════════════════════════════
 document.addEventListener("DOMContentLoaded", async () => {
-  restaurants = await fetchJSON("/api/restaurants");
-  applyLanguage();
-  setupTabs();
-  populateAllSelects();
+  // Wire auth forms
+  document.getElementById("loginForm").addEventListener("submit", submitLogin);
+  document.getElementById("registerForm").addEventListener("submit", submitRegister);
+  document.querySelectorAll(".auth-switch button").forEach(b => {
+    b.addEventListener("click", () => switchAuthMode(b.dataset.mode));
+  });
+  document.getElementById("logoutBtn").addEventListener("click", logout);
 
-  // Default tab: Menu Management
-  loadMenuManagement();
-
-  // Event listeners
+  // Event listeners for app features
   document.getElementById("menuForm").addEventListener("submit", submitMenuItem);
   document.getElementById("csvUploadBtn").addEventListener("click", uploadCSV);
   document.getElementById("browseRestaurant").addEventListener("change", browseMenu);
@@ -34,7 +136,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("addRestaurantForm").addEventListener("submit", addRestaurant);
   document.getElementById("ocrUploadBtn").addEventListener("click", ocrUpload);
 
-  document.getElementById("mfDate").valueAsDate = new Date();
+  // Check for existing session
+  if (getToken()) {
+    await bootApp();
+  } else {
+    showAuthScreen();
+  }
 });
 
 function setupTabs() {
@@ -135,7 +242,7 @@ async function uploadCSV() {
   if (!fileInput.files.length) { msg.textContent = t("msg_select_csv"); return; }
   const formData = new FormData();
   formData.append("file", fileInput.files[0]);
-  const res = await fetch(API + "/api/menu/csv", {method: "POST", body: formData});
+  const res = await fetch(API + "/api/menu/csv", {method: "POST", body: formData, headers: authHeaders()});
   const data = await res.json();
   msg.textContent = t("msg_uploaded", data.added);
   if (data.skipped && data.skipped.length) {
@@ -248,7 +355,7 @@ async function ocrUpload() {
     formData.append("collected_by", by);
 
     try {
-      const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData});
+      const res = await fetch(API + "/api/menu/ocr", {method: "POST", body: formData, headers: authHeaders()});
       if (!res.ok) {
         let errMsg = `HTTP ${res.status}`;
         try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}

@@ -52,10 +52,10 @@ RESTAURANTS = [
 ]
 
 
-def seed_database():
-    """Insert restaurants only. Menus are entered manually by the marketing team."""
-    if Restaurant.query.first():
+def seed_database_for_user(user_id):
+    """Seed starter restaurants for a new user. Called on first registration."""
+    if Restaurant.query.filter_by(user_id=user_id).first():
         return
     for data in RESTAURANTS:
-        db.session.add(Restaurant(**data))
+        db.session.add(Restaurant(user_id=user_id, **data))
     db.session.commit()
