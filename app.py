@@ -203,17 +203,54 @@ def create_app():
     CORS(app)
     db.init_app(app)
 
-    with app.app_context():
-        db.create_all()
-        seed_database()
+    # Lazy DB init: runs on first request instead of at import time.
+    # This keeps cold starts fast on Vercel and surfaces DB errors as
+    # proper HTTP 500s instead of failing to import the module.
+    _db_ready = {"done": False}
+
+    @app.before_request
+    def _ensure_db():
+        if _db_ready["done"]:
+            return
+        try:
+            db.create_all()
+            seed_database()
+            _db_ready["done"] = True
+        except Exception as e:
+            return jsonify({
+                "error": "Database not ready",
+                "detail": str(e),
+                "db_uri_scheme": str(app.config.get("SQLALCHEMY_DATABASE_URI", ""))[:20],
+            }), 500
 
     # ═══════════════════════════════════════════════════════════════════════════
-    #  STATIC
+    #  STATIC & HEALTH
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route("/")
     def index():
         return app.send_static_file("index.html")
+
+    @app.route("/api/health")
+    def health():
+        import os as _os
+        scheme = str(app.config.get("SQLALCHEMY_DATABASE_URI", ""))[:20]
+        try:
+            user_count = User.query.count()
+            db_ok = True
+            db_err = None
+        except Exception as e:
+            user_count = None
+            db_ok = False
+            db_err = str(e)
+        return jsonify({
+            "ok": db_ok,
+            "db_uri_scheme": scheme,
+            "has_DATABASE_URL": bool(_os.environ.get("DATABASE_URL")),
+            "has_SECRET_KEY": bool(_os.environ.get("SECRET_KEY")),
+            "user_count": user_count,
+            "db_error": db_err,
+        })
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  AUTH
@@ -221,39 +258,49 @@ def create_app():
 
     @app.route("/api/auth/register", methods=["POST"])
     def register():
-        data = request.get_json() or {}
-        email = (data.get("email") or "").strip().lower()
-        password = data.get("password") or ""
-        name = (data.get("name") or "").strip()
-        company = (data.get("company") or "").strip()
+        try:
+            data = request.get_json() or {}
+            email = (data.get("email") or "").strip().lower()
+            password = data.get("password") or ""
+            name = (data.get("name") or "").strip()
+            company = (data.get("company") or "").strip()
 
-        if not email or "@" not in email:
-            return jsonify({"error": "Valid email required"}), 400
-        if len(password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters"}), 400
-        if not name:
-            return jsonify({"error": "Name required"}), 400
-        if User.query.filter_by(email=email).first():
-            return jsonify({"error": "Email already registered"}), 409
+            if not email or "@" not in email:
+                return jsonify({"error": "Valid email required"}), 400
+            if len(password) < 6:
+                return jsonify({"error": "Password must be at least 6 characters"}), 400
+            if not name:
+                return jsonify({"error": "Name required"}), 400
+            if User.query.filter_by(email=email).first():
+                return jsonify({"error": "Email already registered"}), 409
 
-        user = User(email=email, name=name, company=company)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
+            user = User(email=email, name=name, company=company)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
 
-        token = generate_token(user.id)
-        return jsonify({"token": token, "user": user.to_dict()}), 201
+            token = generate_token(user.id)
+            return jsonify({"token": token, "user": user.to_dict()}), 201
+        except Exception as e:
+            import traceback
+            app.logger.error(f"Register failed: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": "Registration failed", "detail": str(e)}), 500
 
     @app.route("/api/auth/login", methods=["POST"])
     def login():
-        data = request.get_json() or {}
-        email = (data.get("email") or "").strip().lower()
-        password = data.get("password") or ""
-        user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password):
-            return jsonify({"error": "Invalid email or password"}), 401
-        token = generate_token(user.id)
-        return jsonify({"token": token, "user": user.to_dict()})
+        try:
+            data = request.get_json() or {}
+            email = (data.get("email") or "").strip().lower()
+            password = data.get("password") or ""
+            user = User.query.filter_by(email=email).first()
+            if not user or not user.check_password(password):
+                return jsonify({"error": "Invalid email or password"}), 401
+            token = generate_token(user.id)
+            return jsonify({"token": token, "user": user.to_dict()})
+        except Exception as e:
+            import traceback
+            app.logger.error(f"Login failed: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": "Login failed", "detail": str(e)}), 500
 
     @app.route("/api/auth/me")
     @auth_required
